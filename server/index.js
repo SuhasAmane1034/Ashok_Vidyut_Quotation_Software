@@ -354,7 +354,22 @@ app.post(
     const id = uuidv4();
 
     // Generate unique quotation number
-    const quote_number = `QT-${uuidv4().slice(0, 8).toUpperCase()}`;
+    const latestQuote = await db.execute({
+      sql: "SELECT quote_number FROM quotations ORDER BY created_at DESC LIMIT 1",
+    });
+    
+    let nextNumber = 1;
+    
+    if (latestQuote.rows[0]?.quote_number) {
+      const last = latestQuote.rows[0].quote_number;
+      const num = parseInt(last.replace('QT-', ''), 10);
+    
+      if (!isNaN(num)) {
+        nextNumber = num + 1;
+      }
+    }
+    
+    const quote_number = `QT-${String(nextNumber).padStart(4, '0')}`;
 
     const q = req.body;
 
