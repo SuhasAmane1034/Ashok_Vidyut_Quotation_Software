@@ -10,12 +10,17 @@
 //  Phone opens  http://192.168.1.42:3000  → API = http://192.168.1.42:3001
 //  Laptop opens http://localhost:3000     → API = http://localhost:3001
 //  Production   REACT_APP_API_URL=https://api.myapp.com
+
 const API_PORT = process.env.REACT_APP_API_PORT || 3001;
 
 export const API_BASE =
   process.env.REACT_APP_API_URL ||
-  (window.location.hostname === "localhost"
-    ? `http://localhost:${API_PORT}`
-    : "https://ashok-vidyut-quotation-software.onrender.com");
+  `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
 
 export default API_BASE;
+
+export function serverUrl(path) {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  return `${API_BASE}${path}`;
+}

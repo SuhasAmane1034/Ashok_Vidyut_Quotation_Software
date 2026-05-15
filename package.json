@@ -1,10 +1,32 @@
 {
   "name": "quotation-app",
   "version": "1.0.0",
+  "main": "electron.js",
   "scripts": {
     "install-all": "cd server && npm install && cd ../client && npm install",
     "start-server": "cd server && node index.js",
     "start-client": "cd client && npm start",
-    "dev": "npm run start-server & npm run start-client"
+    "dev": "concurrently \"npm run start-server\" \"npm run start-client\"",
+    "start": "node server/index.js",
+    "electron": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^41.4.0",
+    "electron-builder": "^26.8.1",
+    "concurrently": "^8.2.2"
+  },
+  "build": {
+    "appId": "com.quotation.app",
+    "productName": "Quotation App",
+    "files": [
+      "client/build/**/*",
+      "server/**/*",
+      "electron.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
   }
 }

@@ -5,6 +5,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.17.15",
     "axios": "^1.6.5",
+    "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.312.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -17,7 +18,12 @@
     "build": "react-scripts build"
   },
   "browserslist": {
-    "production": [">0.2%", "not dead"],
-    "development": ["last 1 chrome version"]
+    "production": [
+      ">0.2%",
+      "not dead"
+    ],
+    "development": [
+      "last 1 chrome version"
+    ]
   }
 }

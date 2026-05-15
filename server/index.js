@@ -370,9 +370,9 @@ app.get('/api/analytics', authMiddleware, (req, res) => {
 
 // ── EXCEL EXPORT ──────────────────────────────────────────
 app.get('/api/products/export', authMiddleware, (req, res) => {
-  const products = db.prepare('SELECT name,code,description,rate,unit,mrp,category,image as imageUrl,stock,min_stock FROM products ORDER BY name').all();
+  const products = db.prepare('SELECT name,code,description,rate,unit,mrp,category,image as imageUrl,stock,min_stock,track_stock FROM products ORDER BY name').all();
   const ws = XLSX.utils.json_to_sheet(products);
-  ws['!cols'] = [{wch:30},{wch:12},{wch:40},{wch:10},{wch:10},{wch:10},{wch:15},{wch:40},{wch:10},{wch:12}];
+  ws['!cols'] = [{wch:30},{wch:12},{wch:40},{wch:10},{wch:10},{wch:10},{wch:15},{wch:40},{wch:10},{wch:12},{wch:12}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Products');
   const buf = XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
@@ -398,7 +398,22 @@ app.post('/api/products/import', authMiddleware, upload.single('file'), (req, re
         if (existing) { skipped++; return; }
         const imageUrl = String(row.imageUrl||row.image||row.Image||row['Image URL']||'').trim();
         const description = String(row.description||row.Description||'').trim();
-        ins.run(uuidv4(), name, String(row.code||row.Code||'').trim(), description, Number(row.rate||row.Rate||row.Price||0), String(row.unit||row.Unit||'Pcs').trim(), imageUrl, Number(row.mrp||row.MRP||0)||null, String(row.category||row.Category||'').trim(), Number(row.stock||0), Number(row.min_stock||5), 1);
+        const trackStockRaw = row.track_stock ?? row.trackStock ?? row['Track Stock'] ?? row['track stock'] ?? '';
+        const trackStock = ['1', 'true', 'yes', 'y'].includes(String(trackStockRaw).trim().toLowerCase());
+        ins.run(
+          uuidv4(),
+          name,
+          String(row.code||row.Code||'').trim(),
+          description,
+          Number(row.rate||row.Rate||row.Price||0),
+          String(row.unit||row.Unit||'Pcs').trim(),
+          imageUrl,
+          Number(row.mrp||row.MRP||0)||null,
+          String(row.category||row.Category||'').trim(),
+          Number(row.stock||0),
+          Number(row.min_stock||5),
+          trackStock ? 1 : 0
+        );
         imported++;
       } catch(e) { errors.push(`Row ${idx+2}: ${e.message}`); }
     }))();
@@ -449,4 +464,9 @@ app.listen(PORT, '0.0.0.0', () => {
   } else {
     console.log(`👤  ${users} user(s) in database.\n`);
   }
+  app.use(express.static(path.join(__dirname, "../client/build")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/build/index.html"));
+});
 });

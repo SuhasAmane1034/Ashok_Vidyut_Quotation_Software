@@ -5,71 +5,168 @@ import { Plus, Search, Edit2, Trash2, X, Save, Download, Upload } from 'lucide-r
 import { useApp } from '../context/AppContext';
 import { API_BASE } from '../api/config';
 
-const emptyProduct = { name: '', code: '', rate: '', unit: 'Pcs', category: '', mrp: '', image: '', stock: 0, min_stock: 5, track_stock: false };
+const emptyProduct = {
+  name: '',
+  code: '',
+  rate: '',
+  unit: 'Pcs',
+  category: '',
+  mrp: '',
+  image: '',
+  stock: 0,
+  min_stock: 5,
+  track_stock: false
+};
+
+const resolveImageUrl = (img) => {
+  if (!img) return '';
+  if (/^https?:\/\//i.test(img) || img.startsWith('data:')) return img;
+  return `${API_BASE}${img}`;
+};
 
 export default function ProductLibrary() {
   const { addToast } = useApp();
-  const [search, setSearch]     = useState('');
+  const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
-  const [modal, setModal]       = useState(null);
+  const [modal, setModal] = useState(null);
   const [importing, setImporting] = useState(false);
+
   const importRef = useRef();
+  const imgRef = useRef();
   const qc = useQueryClient();
 
+  const token = localStorage.getItem('token');
+
+  // ---------------- PRODUCTS ----------------
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
-    queryFn: () => axios.get('/api/products').then(r => r.data)
+    queryFn: () =>
+      axios.get('/api/products', {
+        headers: { Authorization: `Bearer ${token}` }
+      }).then(res => res.data)
   });
 
+  // ---------------- SAVE ----------------
   const saveMutation = useMutation({
-    mutationFn: (p) => p.id ? axios.put(`/api/products/${p.id}`, p) : axios.post('/api/products', p),
-    onSuccess: () => { qc.invalidateQueries(['products']); setModal(null); addToast('Product saved!'); },
-    onError:   () => addToast('Save failed', 'error')
+    mutationFn: (p) =>
+      p.id
+        ? axios.put(`/api/products/${p.id}`, p, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        : axios.post('/api/products', p, {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+
+    onSuccess: () => {
+      qc.invalidateQueries(['products']);
+      setModal(null);
+      addToast('Product saved!');
+    },
+    onError: () => addToast('Save failed', 'error')
   });
 
+  // ---------------- DELETE ----------------
   const deleteMutation = useMutation({
-    mutationFn: (id) => axios.delete(`/api/products/${id}`),
-    onSuccess: () => { qc.invalidateQueries(['products']); addToast('Product deleted'); },
-    onError:   () => addToast('Delete failed', 'error')
+    mutationFn: (id) =>
+      axios.delete(`/api/products/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      }),
+
+    onSuccess: () => {
+      qc.invalidateQueries(['products']);
+      addToast('Product deleted');
+    },
+    onError: () => addToast('Delete failed', 'error')
   });
 
-  const handleExport = () => {
-    window.open(`${API_BASE}/api/products/export`, '_blank');
-    addToast('Excel download started', 'success');
+  // ---------------- EXPORT (FIXED) ----------------
+  const handleExport = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/api/products/export`, {
+        responseType: 'blob',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'products.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      addToast('Excel downloaded!', 'success');
+    } catch (err) {
+      console.error(err);
+      addToast('Export failed', 'error');
+    }
   };
 
+  // ---------------- IMPORT (FIXED) ----------------
   const handleImport = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
+
     setImporting(true);
+
     try {
-      const fd = new FormData(); fd.append('file', file);
-      const res = await axios.post('/api/products/import', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const res = await axios.post('/api/products/import', fd, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${token}`
+        }
+      });
+
       qc.invalidateQueries(['products']);
       addToast(`Imported ${res.data.imported} products!`, 'success');
-    } catch { addToast('Import failed — check file format', 'error'); }
+    } catch (err) {
+      console.error(err);
+      addToast('Import failed', 'error');
+    }
+
     setImporting(false);
     e.target.value = '';
   };
 
+  // ---------------- IMAGE UPLOAD ----------------
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const fd = new FormData(); fd.append('file', file);
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fd = new FormData();
+    fd.append('file', file);
+
     try {
-      const res = await axios.post('/api/upload', fd);
-      setModal(m => ({ ...m, data: { ...m.data, image: res.data.url } }));
+      const res = await axios.post('/api/upload', fd, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      setModal((m) => ({
+        ...m,
+        data: { ...m.data, image: res.data.url }
+      }));
+
       addToast('Image uploaded!');
-    } catch { addToast('Image upload failed', 'error'); }
+    } catch {
+      addToast('Image upload failed', 'error');
+    }
   };
 
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
-  const filtered = products.filter(p => {
-    const ms = !search || p.name?.toLowerCase().includes(search.toLowerCase()) ||
-      p.code?.toLowerCase().includes(search.toLowerCase()) ||
-      p.category?.toLowerCase().includes(search.toLowerCase());
-    return ms && (!catFilter || p.category === catFilter);
-  });
 
-  const imgRef = useRef();
+  const filtered = products.filter(p => {
+    const s = search.toLowerCase();
+    return (
+      (!search ||
+        p.name?.toLowerCase().includes(s) ||
+        p.code?.toLowerCase().includes(s) ||
+        p.category?.toLowerCase().includes(s)) &&
+      (!catFilter || p.category === catFilter)
+    );
+  });
 
   return (
     <div>
@@ -108,7 +205,7 @@ export default function ProductLibrary() {
         {/* Import hint */}
         <div style={{ background: 'var(--accent-muted)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 14px', marginBottom: 14, fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>📊</span>
-          <span>Excel import columns: <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>name</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>code</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>rate</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>unit</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>mrp</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>category</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>stock</code> — <span style={{ color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 }} onClick={handleExport}>Export first to see format ↗</span></span>
+          <span>Excel import columns: <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>name</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>code</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>rate</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>unit</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>mrp</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>category</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>imageUrl</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>stock</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>min_stock</code> <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>track_stock</code> — use <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>1/yes/true</code> to add into Inventory — <span style={{ color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 }} onClick={handleExport}>Export first to see format ↗</span></span>
         </div>
 
         <div className="card">
@@ -148,7 +245,7 @@ export default function ProductLibrary() {
                     <tr key={p.id}>
                       <td>
                         {p.image
-                          ? <img src={`${API_BASE}${p.image}`} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 7, border: '1px solid var(--border)' }} />
+                          ? <img src={resolveImageUrl(p.image)} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 7, border: '1px solid var(--border)' }} />
                           : <div style={{ width: 36, height: 36, background: 'var(--accent-muted)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>💡</div>
                         }
                       </td>
@@ -195,7 +292,7 @@ export default function ProductLibrary() {
                 <label>Product Image</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   {modal.data.image
-                    ? <img src={`${API_BASE}${modal.data.image}`} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 9, border: '1px solid var(--border)' }} />
+                    ? <img src={resolveImageUrl(modal.data.image)} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 9, border: '1px solid var(--border)' }} />
                     : <div style={{ width: 56, height: 56, background: 'var(--accent-muted)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, border: '1.5px dashed var(--border)' }}>💡</div>
                   }
                   <div>

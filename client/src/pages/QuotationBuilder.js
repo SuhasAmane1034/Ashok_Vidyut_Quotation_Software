@@ -8,6 +8,12 @@ import { useApp } from '../context/AppContext';
 import PrintView from '../components/PrintView';
 import { API_BASE } from '../api/config';
 
+const resolveImageUrl = (img) => {
+  if (!img) return '';
+  if (/^https?:\/\//i.test(img) || img.startsWith('data:')) return img;
+  return `${API_BASE}${img}`;
+};
+
 const emptyRow = () => ({
   _id: Math.random().toString(36).slice(2),
   product_id: '', product_name: '', product_image: '',
@@ -168,35 +174,47 @@ function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, o
   const [query, setQuery]     = useState(value || '');
   const [results, setResults] = useState([]);
   const [open, setOpen]       = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const [idx, setIdx]         = useState(0);
   const [loading, setLoading] = useState(false);
   const timerRef = useRef(null);
+  const itemRefs = useRef([]);
 
   useEffect(() => { setQuery(value || ''); }, [value]);
 
   useEffect(() => {
-    if (query.length < 1) { setResults([]); setOpen(false); return; }
+    if (!open) return;
+    const el = itemRefs.current[idx];
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [idx, open, results.length]);
+
+  useEffect(() => {
+    if (!isFocused || query.length < 1) { setResults([]); setOpen(false); return; }
     clearTimeout(timerRef.current);
+    setOpen(true);
     setLoading(true);
     timerRef.current = setTimeout(async () => {
       try {
         const res = await axios.get(`/api/products?search=${encodeURIComponent(query)}`);
         setResults(res.data);
-        setOpen(true);
         setIdx(0);
-      } catch {}
+      } catch {
+        // Keep dropdown open so user can still create product inline.
+        setResults([]);
+      }
       setLoading(false);
     }, 200);
     return () => clearTimeout(timerRef.current);
-  }, [query]);
+  }, [query, isFocused]);
 
   const pick = (p) => { setQuery(p.name); setOpen(false); onSelect(p); };
 
   const handleKey = (e) => {
     if (open) {
-      // MODIFIED: idx now ranges over results only (create option is always last via mouse)
-      if (e.key === 'ArrowDown')  { e.preventDefault(); setIdx(i => Math.min(i+1, results.length - 1)); return; }
-      if (e.key === 'ArrowUp')    { e.preventDefault(); setIdx(i => Math.max(i-1, 0)); return; }
+      if (e.key === 'ArrowDown' && results.length > 0)  { e.preventDefault(); setIdx(i => (i + 1) % results.length); return; }
+      if (e.key === 'ArrowUp' && results.length > 0)    { e.preventDefault(); setIdx(i => (i - 1 + results.length) % results.length); return; }
       if (e.key === 'Enter' && results[idx]) { e.preventDefault(); pick(results[idx]); return; }
       if (e.key === 'Escape') { setOpen(false); return; }
     }
@@ -209,22 +227,25 @@ function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, o
   return (
     <div style={{ position: 'relative' }}>
       <div className="autocomplete-wrapper">
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input className="grid-input" value={query}
+        <div className="product-cell-controls">
+        <input className="grid-input product-search-input" value={query}
           onChange={e => { setQuery(e.target.value); onChange(e.target.value); }}
+          onFocus={() => {
+            setIsFocused(true);
+            if (query.length >= 1) setOpen(true);
+          }}
           onKeyDown={handleKey}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onBlur={() => setTimeout(() => { setOpen(false); setIsFocused(false); }, 200)}
           placeholder="Search product…" autoComplete="off" />
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-secondary btn-sm product-create-btn"
             onMouseDown={(e) => {
               e.preventDefault();
               onInlineToggle(query);
               setOpen(false);
             }}
             title="Create new product in this row"
-            style={{ whiteSpace: 'nowrap', padding: '6px 8px' }}
           >
             <Plus size={12} /> {showInline ? 'Close' : 'Create'}
           </button>
@@ -238,9 +259,11 @@ function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, o
             {results.length > 0 ? (
               results.map((p, i) => (
                 <div key={p.id} className={`autocomplete-item product-item ${i === idx ? 'selected' : ''}`}
+                  ref={(el) => { itemRefs.current[i] = el; }}
+                  onMouseEnter={() => setIdx(i)}
                   onMouseDown={() => pick(p)}>
                   {p.image
-                    ? <img src={`${API_BASE}${p.image}`} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                    ? <img src={resolveImageUrl(p.image)} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
                     : <div style={{ width: 42, height: 42, background: 'var(--accent-muted)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>💡</div>
                   }
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -595,7 +618,7 @@ export default function QuotationBuilder() {
         </div>
 
         <div className="card" style={{ marginBottom: 14 }}>
-          <div className="card-header">
+          <div className="card-header products-card-header">
             <div>
               <span className="card-title">Products</span>
               {validRows.length > 0 && (
@@ -667,12 +690,12 @@ export default function QuotationBuilder() {
                         {show('product_image') && (
                           <td className="qt-img-cell">
                             {row.product_image
-                              ? <img src={`${API_BASE}${row.product_image}`} alt="" />
+                              ? <img src={resolveImageUrl(row.product_image)} alt="" />
                               : <div className="img-placeholder">💡</div>
                             }
                           </td>
                         )}
-                        <td data-row={i} data-field="product_name">
+                        <td className="product-name-cell" data-row={i} data-field="product_name">
                           <ProductCell
                             value={row.product_name}
                             onChange={v => updateRow(i, 'product_name', v)}
@@ -723,9 +746,19 @@ export default function QuotationBuilder() {
                         </td>
                         {show('unit') && (
                           <td data-row={i} data-field="unit">
-                            <input className="grid-input" value={row.unit}
+                            <select
+                              className="grid-input"
+                              value={row.unit || 'Pcs'}
                               onChange={e => updateRow(i, 'unit', e.target.value)}
-                              onKeyDown={e => handleKeyNav(e, i, 'unit')} />
+                              onKeyDown={e => handleKeyNav(e, i, 'unit')}
+                            >
+                              <option value="Pcs">Pcs</option>
+                              <option value="Meter">Meter</option>
+                              <option value="Set">Set</option>
+                              <option value="Box">Box</option>
+                              <option value="Kg">Kg</option>
+                              <option value="Reel">Reel</option>
+                            </select>
                           </td>
                         )}
                         <td data-row={i} data-field="rate">
@@ -799,11 +832,6 @@ export default function QuotationBuilder() {
                       1
                     } />
                     {show('discount') && showDiscount && <td />}
-                    <td className="qt-subtotal-label">Subtotal</td>
-                    <td className="qt-subtotal-value">
-                      <Amt value={header.subtotal} currency={currency} />
-                    </td>
-                    <td />
                   </tr>
                 </tfoot>
               )}

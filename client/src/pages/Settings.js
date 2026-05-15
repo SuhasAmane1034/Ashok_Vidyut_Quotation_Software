@@ -3,6 +3,7 @@ import { Save, Plus, Trash2, Edit2, Check, Eye, EyeOff, Upload } from 'lucide-re
 import axios from 'axios';
 import { useApp } from '../context/AppContext';
 import { API_BASE } from '../api/config';
+import TermsFormatted from '../components/TermsFormatted';
 
 function ShortcutEditor({ title, items, onChange }) {
   const [editing, setEditing] = useState(null);
@@ -254,12 +255,24 @@ export default function Settings() {
         <div className="card">
           <div className="card-header">
             <span className="card-title">Default Terms & Conditions</span>
-            <span style={{ fontSize: 11, background: 'var(--danger-bg)', color: 'var(--danger)', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>ALL CAPS → Red Bold on print</span>
+            <span style={{ fontSize: 11, background: 'var(--danger-bg)', color: 'var(--danger)', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>ALL CAPS or **bold** → red on print</span>
           </div>
           <div className="card-body">
             <textarea value={form.terms || ''} onChange={e => f('terms', e.target.value)} rows={6} style={{ fontFamily: 'monospace', fontSize: 12.5 }}
-              placeholder={"ALL RATES ARE INCLUSIVE OF GST.\nGoods once sold will not be taken back.\nWarranty as per company policy.\nAdvance Payment Only."} />
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>💡 One line = one numbered item · Lines in ALL CAPS appear red bold on print</div>
+              placeholder={"ALL RATES ARE INCLUSIVE OF GST.\nGoods once sold will not be taken back.\n**Payment due within 7 days.**\nWarranty as per company policy."} />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+              💡 Use <strong>ALL CAPS</strong> for a whole line, or wrap phrases in <code style={{ fontSize: 10 }}>**double asterisks**</code> for red bold — plain textarea cannot show bold while typing; preview below matches print.
+            </div>
+            <div style={{ marginTop: 10, padding: 12, background: 'var(--bg-hover)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>Live preview (same as print)</div>
+              <TermsFormatted
+                text={form.terms || ''}
+                style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}
+              />
+              {!(form.terms || '').trim() && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>Nothing to preview yet.</span>
+              )}
+            </div>
           </div>
         </div>
 

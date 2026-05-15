@@ -376,7 +376,7 @@ tbody td { padding:11px 14px; vertical-align:middle; }
 .qt-table .col-unit  { width: 52px; }
 .qt-table .col-rate  { width: 80px; }
 .qt-table .col-disc  { width: 56px; }
-.qt-table .col-amt   { width: 94px; }
+.qt-table .col-amt   { width: 120px; }
 .qt-table .col-del   { width: 30px; }
 
 /* ── Header ── */
@@ -398,7 +398,7 @@ tbody td { padding:11px 14px; vertical-align:middle; }
 /* ── Body rows — FIXED HEIGHT stops image-load jump ── */
 .qt-table tbody tr {
   border-bottom: 1px solid var(--border);
-  height: 44px;          /* Every row is always exactly this tall */
+  height: 52px;          /* Increased row height for better readability */
 }
 .qt-table tbody tr:hover td { background: rgba(99,102,241,0.04); }
 .qt-table tbody tr.empty-row td { opacity: 0.45; }
@@ -409,6 +409,16 @@ tbody td { padding:11px 14px; vertical-align:middle; }
   vertical-align: middle;
   overflow: hidden;       /* Content CANNOT push the cell wider */
   max-width: 0;           /* Works with table-layout:fixed to enforce col width */
+}
+.qt-table tbody td[data-field="product_name"] {
+  overflow: visible;
+  max-width: none;
+  position: relative;
+  z-index: 20;
+}
+.qt-table tbody td.product-name-cell {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 .qt-table tbody td.num { text-align: right; padding-right: 10px; }
 .qt-table tbody td.ctr { text-align: center; }
@@ -557,6 +567,30 @@ tbody td { padding:11px 14px; vertical-align:middle; }
    AUTOCOMPLETE
 ══════════════════════════════════════════════════════════ */
 .autocomplete-wrapper { position:relative; }
+.product-cell-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+.product-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.product-name-cell .product-search-input {
+  min-height: 34px;
+}
+.product-create-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.products-card-header {
+  min-height: 64px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
 .autocomplete-dropdown {
   position:absolute; top:calc(100% + 4px); left:0; right:0;
   background:var(--bg-card); backdrop-filter:blur(20px);
@@ -776,6 +810,7 @@ input:checked + .toggle-track::after { transform:translateX(18px); }
   max-width: 520px;
   padding: 6px;
   gap: 3px;
+  scroll-behavior: smooth;
 }
 .product-item {
   padding: 10px 10px !important;

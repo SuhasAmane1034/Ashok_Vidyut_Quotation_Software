@@ -5,6 +5,12 @@ import { AlertTriangle, Package, TrendingDown, Plus, Minus, DollarSign, RefreshC
 import { useApp } from '../context/AppContext';
 import { API_BASE } from '../api/config';
 
+const resolveImageUrl = (img) => {
+  if (!img) return '';
+  if (/^https?:\/\//i.test(img) || img.startsWith('data:')) return img;
+  return `${API_BASE}${img}`;
+};
+
 function StockAdjustModal({ product, onClose, onSave }) {
   const [adj, setAdj]   = useState('');
   const [note, setNote] = useState('');
@@ -179,7 +185,7 @@ export default function Inventory() {
                 <div key={p.id} className={`inventory-card ${isOut ? 'out-stock' : isLow ? 'low-stock' : ''}`}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                     {p.image
-                      ? <img src={`${API_BASE}${p.image}`} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 7, flexShrink: 0 }} />
+                      ? <img src={resolveImageUrl(p.image)} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 7, flexShrink: 0 }} />
                       : <div style={{ width: 36, height: 36, background: 'var(--accent-muted)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>💡</div>
                     }
                     <div style={{ flex: 1, minWidth: 0 }}>
