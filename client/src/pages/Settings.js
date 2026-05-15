@@ -7,8 +7,8 @@ import TermsFormatted from '../components/TermsFormatted';
 
 function ShortcutEditor({ title, items, onChange }) {
   const [editing, setEditing] = useState(null);
-  const [newKey, setNewKey]   = useState('');
-  const [newVal, setNewVal]   = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [newVal, setNewVal] = useState('');
   const add = () => { if (!newKey || !newVal) return; onChange([...items, { key: newKey.toUpperCase(), value: newVal }]); setNewKey(''); setNewVal(''); };
   const remove = (i) => onChange(items.filter((_, idx) => idx !== i));
   const update = (i, field, value) => { const n = [...items]; n[i] = { ...n[i], [field]: value }; onChange(n); };
@@ -45,53 +45,53 @@ function ShortcutEditor({ title, items, onChange }) {
 }
 
 const ALL_COLUMNS = [
-  { key: 'sr_no',         label: 'Sr. No',       locked: false },
+  { key: 'sr_no', label: 'Sr. No', locked: false },
   { key: 'product_image', label: 'Product Image', locked: false },
-  { key: 'product_name',  label: 'Product Name',  locked: true  },
-  { key: 'shape',         label: 'Shape',         locked: false },
-  { key: 'color',         label: 'Color',         locked: false },
-  { key: 'body_color',    label: 'Body Color',    locked: false },
-  { key: 'warranty',      label: 'Warranty',      locked: false },
-  { key: 'quantity',      label: 'Quantity',      locked: true  },
-  { key: 'unit',          label: 'Unit',          locked: false },
-  { key: 'rate',          label: 'Rate',          locked: true  },
-  { key: 'discount',      label: 'Discount %',    locked: false },
-  { key: 'amount',        label: 'Amount',        locked: true  },
+  { key: 'product_name', label: 'Product Name', locked: true },
+  { key: 'shape', label: 'Shape', locked: false },
+  { key: 'color', label: 'Color', locked: false },
+  { key: 'body_color', label: 'Body Color', locked: false },
+  { key: 'warranty', label: 'Warranty', locked: false },
+  { key: 'quantity', label: 'Quantity', locked: true },
+  { key: 'unit', label: 'Unit', locked: false },
+  { key: 'rate', label: 'Rate', locked: true },
+  { key: 'discount', label: 'Discount %', locked: false },
+  { key: 'amount', label: 'Amount', locked: true },
 ];
 
-const ACCENT_COLORS = ['#6366f1','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#0ea5e9','#f97316','#14b8a6'];
+const ACCENT_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#0ea5e9', '#f97316', '#14b8a6'];
 
 export default function Settings() {
   const { settings, updateSettings } = useApp();
-  const [form, setForm]   = useState({});
-  const [shapes, setShapes]       = useState([]);
-  const [colors, setColors]       = useState([]);
+  const [form, setForm] = useState({});
+  const [shapes, setShapes] = useState([]);
+  const [colors, setColors] = useState([]);
   const [bodyColors, setBodyColors] = useState([]);
   const [warranties, setWarranties] = useState([]);
-  const [colVis, setColVis]       = useState({});
+  const [colVis, setColVis] = useState({});
   const [uploading, setUploading] = useState(false);
   const logoRef = useRef();
 
   useEffect(() => {
     if (settings) {
       setForm({
-        company_name:    settings.company_name    || '',
+        company_name: settings.company_name || '',
         company_address: settings.company_address || '',
-        company_phone:   settings.company_phone   || '',
-        currency:        settings.currency        || '₹',
-        validity_days:   settings.validity_days   || 30,
-        default_unit:    settings.default_unit    || 'Pcs',
-        tax_rate:        settings.tax_rate        || 18,
-        tax_label:       settings.tax_label       || 'GST',
-        accent_color:    settings.accent_color    || '#6366f1',
-        dark_mode:       settings.dark_mode       || false,
-        terms:           settings.terms           || '',
-        company_logo:    settings.company_logo    || '',
+        company_phone: settings.company_phone || '',
+        currency: settings.currency || '₹',
+        validity_days: settings.validity_days || 30,
+        default_unit: settings.default_unit || 'Pcs',
+        tax_rate: settings.tax_rate || 18,
+        tax_label: settings.tax_label || 'GST',
+        accent_color: settings.accent_color || '#6366f1',
+        dark_mode: settings.dark_mode || false,
+        terms: settings.terms || '',
+        company_logo: settings.company_logo || '',
       });
-      setShapes(Array.isArray(settings.shapes)        ? settings.shapes        : []);
-      setColors(Array.isArray(settings.colors)        ? settings.colors        : []);
+      setShapes(Array.isArray(settings.shapes) ? settings.shapes : []);
+      setColors(Array.isArray(settings.colors) ? settings.colors : []);
       setBodyColors(Array.isArray(settings.body_colors) ? settings.body_colors : []);
-      setWarranties(Array.isArray(settings.warranties) ? settings.warranties   : []);
+      setWarranties(Array.isArray(settings.warranties) ? settings.warranties : []);
       const cv = settings.columns_visible && typeof settings.columns_visible === 'object' ? settings.columns_visible : {};
       const defaults = {};
       ALL_COLUMNS.forEach(c => { defaults[c.key] = cv[c.key] !== false; });
@@ -106,7 +106,7 @@ export default function Settings() {
     try {
       const res = await axios.post('/api/upload', fd);
       setForm(f => ({ ...f, company_logo: res.data.url }));
-    } catch {}
+    } catch { }
     setUploading(false);
   };
 
@@ -136,21 +136,82 @@ export default function Settings() {
               {/* Global Logo */}
               <div className="form-group">
                 <label>Company Logo (Global — used on all quotes)</label>
+
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+
                   {form.company_logo ? (
-                    <img src={`${API_BASE}${form.company_logo}`} alt="logo" style={{ width: 60, height: 60, objectFit: 'contain', borderRadius: 10, border: '1.5px solid var(--border)', background: 'white', padding: 3 }} />
+                    <img
+                      src={form.company_logo}
+                      alt="logo"
+                      onError={(e) => {
+                        console.log('Image failed:', form.company_logo);
+                        e.target.style.display = 'none';
+                      }}
+                      style={{
+                        width: 60,
+                        height: 60,
+                        objectFit: 'contain',
+                        borderRadius: 10,
+                        border: '1.5px solid var(--border)',
+                        background: 'white',
+                        padding: 3
+                      }}
+                    />
                   ) : (
-                    <div style={{ width: 60, height: 60, background: 'var(--accent-muted)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, border: '1.5px dashed var(--border)' }}>🏢</div>
+                    <div
+                      style={{
+                        width: 60,
+                        height: 60,
+                        background: 'var(--accent-muted)',
+                        borderRadius: 10,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 26,
+                        border: '1.5px dashed var(--border)'
+                      }}
+                    >
+                      🏢
+                    </div>
                   )}
+
                   <div>
-                    <input ref={logoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoUpload} />
-                    <button className="btn btn-secondary btn-sm" onClick={() => logoRef.current?.click()} disabled={uploading}>
-                      <Upload size={13} /> {uploading ? 'Uploading...' : 'Upload Logo'}
+                    <input
+                      ref={logoRef}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={handleLogoUpload}
+                    />
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => logoRef.current?.click()}
+                      disabled={uploading}
+                    >
+                      <Upload size={13} />
+                      {uploading ? 'Uploading...' : 'Upload Logo'}
                     </button>
+
                     {form.company_logo && (
-                      <button className="btn btn-ghost btn-sm" style={{ marginLeft: 6 }} onClick={() => f('company_logo', '')}>Remove</button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ marginLeft: 6 }}
+                        onClick={() => f('company_logo', '')}
+                      >
+                        Remove
+                      </button>
                     )}
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>PNG / JPG / SVG</div>
+
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                        marginTop: 4
+                      }}
+                    >
+                      PNG / JPG / SVG
+                    </div>
                   </div>
                 </div>
               </div>

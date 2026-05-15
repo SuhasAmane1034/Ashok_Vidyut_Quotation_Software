@@ -35,27 +35,18 @@ export default function ProductLibrary() {
   const imgRef = useRef();
   const qc = useQueryClient();
 
-  const token = localStorage.getItem('token');
-
   // ---------------- PRODUCTS ----------------
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
-    queryFn: () =>
-      axios.get('/api/products', {
-        headers: { Authorization: `Bearer ${token}` }
-      }).then(res => res.data)
+    queryFn: () => axios.get('/api/products').then(res => res.data)
   });
 
   // ---------------- SAVE ----------------
   const saveMutation = useMutation({
     mutationFn: (p) =>
       p.id
-        ? axios.put(`/api/products/${p.id}`, p, {
-            headers: { Authorization: `Bearer ${token}` }
-          })
-        : axios.post('/api/products', p, {
-            headers: { Authorization: `Bearer ${token}` }
-          }),
+        ? axios.put(`/api/products/${p.id}`, p)
+        : axios.post('/api/products', p),
 
     onSuccess: () => {
       qc.invalidateQueries(['products']);
@@ -67,10 +58,7 @@ export default function ProductLibrary() {
 
   // ---------------- DELETE ----------------
   const deleteMutation = useMutation({
-    mutationFn: (id) =>
-      axios.delete(`/api/products/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      }),
+    mutationFn: (id) => axios.delete(`/api/products/${id}`),
 
     onSuccess: () => {
       qc.invalidateQueries(['products']);
@@ -82,9 +70,8 @@ export default function ProductLibrary() {
   // ---------------- EXPORT (FIXED) ----------------
   const handleExport = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/api/products/export`, {
+      const res = await axios.get('/api/products/export', {
         responseType: 'blob',
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -114,10 +101,7 @@ export default function ProductLibrary() {
       fd.append('file', file);
 
       const res = await axios.post('/api/products/import', fd, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          Authorization: `Bearer ${token}`
-        }
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
       qc.invalidateQueries(['products']);
@@ -140,9 +124,7 @@ export default function ProductLibrary() {
     fd.append('file', file);
 
     try {
-      const res = await axios.post('/api/upload', fd, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await axios.post('/api/upload', fd);
 
       setModal((m) => ({
         ...m,

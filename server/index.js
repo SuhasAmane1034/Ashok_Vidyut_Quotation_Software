@@ -1,40 +1,63 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
-const Database = require('better-sqlite3');
-const { v4: uuidv4 } = require('uuid');
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const compression = require('compression');
+const helmet = require('helmet');
+const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const XLSX = require('xlsx');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+const db = require('./config/db');
+const cloudinary = require('./config/cloudinary');
+const { initDatabase } = require('./db/init');
+
 const app = express();
-const PORT       = process.env.PORT       || 3001;
+const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'quoteflow_secret_change_in_production';
 const JWT_EXPIRES = '7d';
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// ── CORS - allow all localhost origins ────────────────────
-app.use(cors({
-  origin: true,        // reflect the request origin (works for all localhost ports)
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function corsOrigin(origin, callback) {
+  if (!origin) return callback(null, true);
+  if (NODE_ENV !== 'production') return callback(null, true);
+  if (allowedOrigins.length === 0) {
+    console.warn('[CORS] NODE_ENV=production but FRONTEND_URL is empty — allowing all origins. Set FRONTEND_URL for strict CORS.');
+    return callback(null, true);
+  }
+  if (allowedOrigins.includes(origin)) return callback(null, true);
+  console.warn(`[CORS] Blocked origin: ${origin}`);
+  return callback(null, false);
+}
+
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(compression());
+
+const corsOptions = {
+  origin: corsOrigin,
   credentials: true,
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization']
-}));
-app.options('*', cors());
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '50mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
 
-// ── FILE UPLOAD ───────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: './uploads/',
-  filename: (req, file, cb) => cb(null, uuidv4() + path.extname(file.originalname))
-});
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
 
-// ── AUTH MIDDLEWARE ───────────────────────────────────────
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
@@ -46,427 +69,631 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
-// ── DATABASE ──────────────────────────────────────────────
-const db = new Database('./quotations.db');
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const imageUpload = multer({
+  storage: new CloudinaryStorage({
+    cloudinary,
+    params: {
+      folder: 'quoteflow',
+      resource_type: 'image',
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'admin',
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-  CREATE TABLE IF NOT EXISTS products (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    code TEXT,
-    description TEXT DEFAULT '',
-    rate REAL DEFAULT 0,
-    unit TEXT DEFAULT 'Pcs',
-    image TEXT,
-    mrp REAL,
-    category TEXT,
-    stock INTEGER DEFAULT 0,
-    min_stock INTEGER DEFAULT 5,
-    track_stock INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-  -- Add description column if upgrading from older DB
-  CREATE TABLE IF NOT EXISTS _migration_guard (id INTEGER PRIMARY KEY);
-  CREATE TABLE IF NOT EXISTS quotations (
-    id TEXT PRIMARY KEY,
-    quote_number TEXT UNIQUE,
-    company_name TEXT,
-    company_logo TEXT,
-    customer_name TEXT,
-    customer_mobile TEXT,
-    customer_address TEXT,
-    date TEXT,
-    validity_days INTEGER DEFAULT 30,
-    subtotal REAL DEFAULT 0,
-    discount REAL DEFAULT 0,
-    tax REAL DEFAULT 0,
-    tax_rate REAL DEFAULT 0,
-    total REAL DEFAULT 0,
-    notes TEXT,
-    terms TEXT,
-    status TEXT DEFAULT 'draft',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS quotation_items (
-    id TEXT PRIMARY KEY,
-    quotation_id TEXT,
-    sr_no INTEGER,
-    product_id TEXT,
-    product_name TEXT,
-    product_image TEXT,
-    shape TEXT,
-    color TEXT,
-    body_color TEXT,
-    warranty TEXT,
-    quantity REAL DEFAULT 1,
-    unit TEXT DEFAULT 'Pcs',
-    rate REAL DEFAULT 0,
-    discount REAL DEFAULT 0,
-    amount REAL DEFAULT 0,
-    bill_after_warranty INTEGER DEFAULT 0,
-    warranty_end_date TEXT,
-    FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
-  );
-`);
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
 
-// ── SEED SETTINGS ─────────────────────────────────────────
-const defaultSettings = {
-  company_name: 'Ashok Vidyut',
-  company_logo: '',
-  company_address: 'Ashok Chowk, Opp WIT Boys Hostel, Old WIT College Road, SOLAPUR-413005',
-  company_phone: '8411022244',
-  validity_days: '7',
-  default_unit: 'Pcs',
-  currency: 'Rs.',
-  tax_rate: '18',
-  tax_label: 'GST',
-  accent_color: '#6366f1',
-  dark_mode: 'false',
-  terms: 'ALL RATES ARE INCLUSIVE OF GST.\nGoods once sold will not be taken back.\nWarranty as per company policy.\nAdvance Payment Only.',
-  shapes: JSON.stringify([
-    { key: 'R', value: 'Round' }, { key: 'S', value: 'Square' },
-    { key: 'RE', value: 'Rectangle' }, { key: 'OV', value: 'Oval' }
-  ]),
-  colors: JSON.stringify([
-    { key: 'W', value: 'White' }, { key: 'NW', value: 'Natural White' },
-    { key: 'WW', value: 'Warm White' }, { key: '3', value: '3 in 1' },
-    { key: '5', value: '5000K' }, { key: 'RGB', value: 'RGB' }
-  ]),
-  body_colors: JSON.stringify([
-    { key: 'B', value: 'Black Body' }, { key: 'W', value: 'White Body' },
-    { key: 'GB', value: 'Gun Black' }, { key: 'RG', value: 'Rose Gold' },
-    { key: 'SS', value: 'Silver' }
-  ]),
-  warranties: JSON.stringify([
-    { key: 'NW', value: 'No Warranty' }, { key: '1', value: '1 Year' },
-    { key: '2', value: '2 Year' }, { key: '3', value: '3 Year' },
-    { key: '5', value: '5 Year' }, { key: '10', value: '10 Year' }
-  ]),
-  columns_visible: JSON.stringify({
-    sr_no: true, product_image: true, product_name: true, shape: true,
-    color: true, body_color: true, warranty: true, quantity: true,
-    unit: true, rate: true, discount: true, amount: true
-  })
-};
-const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-Object.entries(defaultSettings).forEach(([k, v]) => insertSetting.run(k, v));
-
-// ── SEED PRODUCTS ─────────────────────────────────────────
-if (db.prepare('SELECT COUNT(*) as c FROM products').get().c === 0) {
-  const ins = db.prepare('INSERT INTO products (id,name,code,rate,unit,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?)');
-  [
-    ['p1','LED Panel Light 18W','PL18W',450,'Pcs','Panel',50,10,1],
-    ['p2','LED Panel Light 36W','PL36W',750,'Pcs','Panel',30,5,1],
-    ['p3','LED Spot Light 7W','SL7W',180,'Pcs','Spot',100,20,1],
-    ['p4','LED Spot Light 12W','SL12W',280,'Pcs','Spot',75,10,1],
-    ['p5','LED Strip Light 5050','STR5050',120,'Meter','Strip',200,30,1],
-    ['p6','LED Strip Light 3528','STR3528',80,'Meter','Strip',150,20,1],
-    ['p7','LED Bulb 9W','BL9W',75,'Pcs','Bulb',200,50,1],
-    ['p8','LED Bulb 12W','BL12W',95,'Pcs','Bulb',180,40,1],
-    ['p9','LED Tube Light 20W','TL20W',220,'Pcs','Tube',60,10,1],
-    ['p10','LED Downlight 10W','DL10W',320,'Pcs','Downlight',80,15,1],
-    ['p11','LED Flood Light 50W','FL50W',1200,'Pcs','Flood',20,5,1],
-    ['p12','LED Street Light 30W','STRL30W',2500,'Pcs','Street',10,3,1],
-    ['p13','LED COB Light 20W','COB20W',550,'Pcs','COB',40,8,1],
-    ['p14','LED Driver 12V 5A','DRV12V5A',350,'Pcs','Driver',60,10,1],
-    ['p15','LED Driver 24V 10A','DRV24V10A',680,'Pcs','Driver',35,5,1],
-    ['p16','LED Batten Light 18W','BAT18W',390,'Pcs','Batten',50,10,1],
-    ['p17','LED Ceiling Light 24W','CEL24W',890,'Pcs','Ceiling',25,5,1],
-    ['p18','LED Track Light 15W','TRK15W',750,'Pcs','Track',30,5,1],
-    ['p19','LED Emergency Light','EMG1',650,'Pcs','Emergency',20,4,1],
-    ['p20','LED Solar Light 10W','SOL10W',1800,'Pcs','Solar',15,3,1],
-  ].forEach(p => ins.run(...p));
-}
-
-// ── AUTH ROUTES (NO auth required) ───────────────────────
-app.post('/api/auth/register', async (req, res) => {
-  try {
+// ── AUTH ROUTES ───────────────────────────────────────────
+app.post(
+  '/api/auth/register',
+  asyncHandler(async (req, res) => {
     const { name, email, password } = req.body;
-    if (!name || !email || !password)
+    if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email and password are required' });
-    if (password.length < 6)
+    }
+    if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
-    if (existing)
+    }
+    const emailNorm = email.toLowerCase().trim();
+    const existing = await db.execute({
+      sql: 'SELECT id FROM users WHERE email = ?',
+      args: [emailNorm],
+    });
+    if (existing.rows[0]) {
       return res.status(400).json({ error: 'This email is already registered. Please login instead.' });
+    }
     const password_hash = await bcrypt.hash(password, 10);
     const id = uuidv4();
-    db.prepare('INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)')
-      .run(id, name.trim(), email.toLowerCase().trim(), password_hash);
-    const token = jwt.sign({ id, name: name.trim(), email: email.toLowerCase().trim() }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-    res.status(201).json({ token, user: { id, name: name.trim(), email: email.toLowerCase().trim() } });
-  } catch (e) {
-    console.error('Register error:', e);
-    res.status(500).json({ error: 'Registration failed: ' + e.message });
-  }
-});
+    await db.execute({
+      sql: 'INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)',
+      args: [id, name.trim(), emailNorm, password_hash],
+    });
+    const token = jwt.sign({ id, name: name.trim(), email: emailNorm }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.status(201).json({ token, user: { id, name: name.trim(), email: emailNorm } });
+  })
+);
 
-app.post('/api/auth/login', async (req, res) => {
-  try {
+app.post(
+  '/api/auth/login',
+  asyncHandler(async (req, res) => {
     const { email, password } = req.body;
-    if (!email || !password)
+    if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
-    if (!user)
-      return res.status(401).json({ error: 'No account found with this email' });
+    }
+    const emailNorm = email.toLowerCase().trim();
+    const { rows } = await db.execute({
+      sql: 'SELECT * FROM users WHERE email = ?',
+      args: [emailNorm],
+    });
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: 'No account found with this email' });
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid)
-      return res.status(401).json({ error: 'Incorrect password' });
-    const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    if (!valid) return res.status(401).json({ error: 'Incorrect password' });
+    const token = jwt.sign(
+      { id: user.id, name: user.name, email: user.email },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
     res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
-  } catch (e) {
-    console.error('Login error:', e);
-    res.status(500).json({ error: 'Login failed: ' + e.message });
-  }
-});
+  })
+);
 
-app.get('/api/auth/me', authMiddleware, (req, res) => {
-  const user = db.prepare('SELECT id,name,email,role,created_at FROM users WHERE id=?').get(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
-});
+app.get(
+  '/api/auth/me',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute({
+      sql: 'SELECT id,name,email,role,created_at FROM users WHERE id=?',
+      args: [req.user.id],
+    });
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  })
+);
 
-// ── SETTINGS ──────────────────────────────────────────────
-app.get('/api/settings', authMiddleware, (req, res) => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
-  const obj = {};
-  rows.forEach(r => { try { obj[r.key] = JSON.parse(r.value); } catch { obj[r.key] = r.value; } });
-  res.json(obj);
-});
+// ── SETTINGS ────────────────────────────────────────────────
+app.get(
+  '/api/settings',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute('SELECT key, value FROM settings');
+    const obj = {};
+    rows.forEach((r) => {
+      try {
+        obj[r.key] = JSON.parse(r.value);
+      } catch {
+        obj[r.key] = r.value;
+      }
+    });
+    res.json(obj);
+  })
+);
 
-app.put('/api/settings', authMiddleware, (req, res) => {
-  const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-  db.transaction((data) => {
-    Object.entries(data).forEach(([k, v]) => upsert.run(k, typeof v === 'object' ? JSON.stringify(v) : String(v)));
-  })(req.body);
-  res.json({ success: true });
-});
-
-// ── MIGRATION: add description column if not exists ──────
-try { db.exec("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''"); } catch {}
+app.put(
+  '/api/settings',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const stmts = Object.entries(req.body).map(([k, v]) => ({
+      sql: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      args: [k, typeof v === 'object' ? JSON.stringify(v) : String(v)],
+    }));
+    await db.batch(stmts, 'write');
+    res.json({ success: true });
+  })
+);
 
 // ── PRODUCTS ──────────────────────────────────────────────
-// Dedicated search endpoint (returns card-style data)
-app.get('/api/products/search', authMiddleware, (req, res) => {
-  const q = req.query.q || '';
-  if (!q) return res.json([]);
-  res.json(db.prepare('SELECT * FROM products WHERE name LIKE ? OR code LIKE ? OR category LIKE ? ORDER BY name LIMIT 20').all(`%${q}%`, `%${q}%`, `%${q}%`));
-});
-app.get('/api/products', authMiddleware, (req, res) => {
-  const { search } = req.query;
-  if (search) return res.json(db.prepare('SELECT * FROM products WHERE name LIKE ? OR code LIKE ? ORDER BY name LIMIT 20').all(`%${search}%`, `%${search}%`));
-  res.json(db.prepare('SELECT * FROM products ORDER BY name').all());
-});
+app.get(
+  '/api/products/search',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const q = req.query.q || '';
+    if (!q) return res.json([]);
+    const like = `%${q}%`;
+    const { rows } = await db.execute({
+      sql: 'SELECT * FROM products WHERE name LIKE ? OR code LIKE ? OR category LIKE ? ORDER BY name LIMIT 20',
+      args: [like, like, like],
+    });
+    res.json(rows);
+  })
+);
 
-app.post('/api/products', authMiddleware, (req, res) => {
-  const p = req.body; const id = uuidv4();
-  db.prepare('INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, p.name, p.code||'', p.description||'', p.rate||0, p.unit||'Pcs', p.image||'', p.mrp||null, p.category||'', p.stock||0, p.min_stock||5, p.track_stock?1:0);
-  res.json({ id, ...p });
-});
+app.get(
+  '/api/products',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { search } = req.query;
+    if (search) {
+      const like = `%${search}%`;
+      const { rows } = await db.execute({
+        sql: 'SELECT * FROM products WHERE name LIKE ? OR code LIKE ? ORDER BY name LIMIT 20',
+        args: [like, like],
+      });
+      return res.json(rows);
+    }
+    const { rows } = await db.execute('SELECT * FROM products ORDER BY name');
+    res.json(rows);
+  })
+);
 
-app.put('/api/products/:id', authMiddleware, (req, res) => {
-  const p = req.body;
-  db.prepare('UPDATE products SET name=?,code=?,description=?,rate=?,unit=?,image=?,mrp=?,category=?,stock=?,min_stock=?,track_stock=? WHERE id=?')
-    .run(p.name, p.code||'', p.description||'', p.rate||0, p.unit||'Pcs', p.image||'', p.mrp||null, p.category||'', p.stock||0, p.min_stock||5, p.track_stock?1:0, req.params.id);
-  res.json({ success: true });
-});
+app.post(
+  '/api/products',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const p = req.body;
+    const id = uuidv4();
+    await db.execute({
+      sql: 'INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      args: [
+        id,
+        p.name,
+        p.code || '',
+        p.description || '',
+        p.rate || 0,
+        p.unit || 'Pcs',
+        p.image || '',
+        p.mrp ?? null,
+        p.category || '',
+        p.stock || 0,
+        p.min_stock || 5,
+        p.track_stock ? 1 : 0,
+      ],
+    });
+    res.json({ id, ...p });
+  })
+);
 
-app.delete('/api/products/:id', authMiddleware, (req, res) => {
-  db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);
-  res.json({ success: true });
-});
+app.put(
+  '/api/products/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const p = req.body;
+    await db.execute({
+      sql: 'UPDATE products SET name=?,code=?,description=?,rate=?,unit=?,image=?,mrp=?,category=?,stock=?,min_stock=?,track_stock=? WHERE id=?',
+      args: [
+        p.name,
+        p.code || '',
+        p.description || '',
+        p.rate || 0,
+        p.unit || 'Pcs',
+        p.image || '',
+        p.mrp ?? null,
+        p.category || '',
+        p.stock || 0,
+        p.min_stock || 5,
+        p.track_stock ? 1 : 0,
+        req.params.id,
+      ],
+    });
+    res.json({ success: true });
+  })
+);
 
-app.post('/api/products/:id/stock', authMiddleware, (req, res) => {
-  const product = db.prepare('SELECT * FROM products WHERE id=?').get(req.params.id);
-  if (!product) return res.status(404).json({ error: 'Not found' });
-  const newStock = Math.max(0, (product.stock||0) + Number(req.body.adjustment));
-  db.prepare('UPDATE products SET stock=? WHERE id=?').run(newStock, req.params.id);
-  res.json({ success: true, stock: newStock });
-});
+app.delete(
+  '/api/products/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    await db.execute({ sql: 'DELETE FROM products WHERE id=?', args: [req.params.id] });
+    res.json({ success: true });
+  })
+);
 
-app.get('/api/inventory/dashboard', authMiddleware, (req, res) => {
-  res.json({
-    total_products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
-    low_stock:      db.prepare('SELECT * FROM products WHERE track_stock=1 AND stock <= min_stock ORDER BY stock ASC').all(),
-    out_of_stock:   db.prepare('SELECT * FROM products WHERE track_stock=1 AND stock=0').all(),
-    stock_value:    db.prepare('SELECT COALESCE(SUM(stock*rate),0) as v FROM products WHERE track_stock=1').get().v,
-  });
-});
+app.post(
+  '/api/products/:id/stock',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute({
+      sql: 'SELECT * FROM products WHERE id=?',
+      args: [req.params.id],
+    });
+    const product = rows[0];
+    if (!product) return res.status(404).json({ error: 'Not found' });
+    const newStock = Math.max(0, (product.stock || 0) + Number(req.body.adjustment));
+    await db.execute({
+      sql: 'UPDATE products SET stock=? WHERE id=?',
+      args: [newStock, req.params.id],
+    });
+    res.json({ success: true, stock: newStock });
+  })
+);
 
-// ── QUOTATIONS ────────────────────────────────────────────
-app.get('/api/quotations', authMiddleware, (req, res) => {
-  res.json(db.prepare('SELECT * FROM quotations ORDER BY created_at DESC').all());
-});
+app.get(
+  '/api/inventory/dashboard',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const [total, low, out, val] = await Promise.all([
+      db.execute('SELECT COUNT(*) as c FROM products'),
+      db.execute('SELECT * FROM products WHERE track_stock=1 AND stock <= min_stock ORDER BY stock ASC'),
+      db.execute('SELECT * FROM products WHERE track_stock=1 AND stock=0'),
+      db.execute('SELECT COALESCE(SUM(stock*rate),0) as v FROM products WHERE track_stock=1'),
+    ]);
+    res.json({
+      total_products: Number(total.rows[0]?.c ?? 0),
+      low_stock: low.rows,
+      out_of_stock: out.rows,
+      stock_value: val.rows[0]?.v ?? 0,
+    });
+  })
+);
 
-app.get('/api/quotations/:id', authMiddleware, (req, res) => {
-  const q = db.prepare('SELECT * FROM quotations WHERE id=?').get(req.params.id);
-  if (!q) return res.status(404).json({ error: 'Not found' });
-  q.items = db.prepare('SELECT * FROM quotation_items WHERE quotation_id=? ORDER BY sr_no').all(req.params.id);
-  res.json(q);
-});
+// ── QUOTATIONS ──────────────────────────────────────────────
+app.get(
+  '/api/quotations',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute('SELECT * FROM quotations ORDER BY created_at DESC');
+    res.json(rows);
+  })
+);
 
-app.post('/api/quotations', authMiddleware, (req, res) => {
-  const id = uuidv4();
-  const count = db.prepare('SELECT COUNT(*) as c FROM quotations').get().c;
-  const quote_number = `QT-${String(count+1).padStart(4,'0')}`;
-  const q = req.body;
-  const logo = q.company_logo || db.prepare("SELECT value FROM settings WHERE key='company_logo'").get()?.value || '';
-  db.prepare(`INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_address,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, quote_number, q.company_name||'', logo, q.customer_name||'', q.customer_mobile||'', q.customer_address||'', q.date||new Date().toISOString().split('T')[0], q.validity_days||30, q.subtotal||0, q.discount||0, q.tax||0, q.tax_rate||0, q.total||0, q.notes||'', q.terms||'', q.status||'draft');
-  if (q.items?.length) {
-    const ins = db.prepare(`INSERT INTO quotation_items (id,quotation_id,sr_no,product_id,product_name,product_image,shape,color,body_color,warranty,quantity,unit,rate,discount,amount,bill_after_warranty,warranty_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    db.transaction(() => q.items.forEach((item,i) => {
-      ins.run(uuidv4(),id,i+1,item.product_id||'',item.product_name||'',item.product_image||'',item.shape||'',item.color||'',item.body_color||'',item.warranty||'',item.quantity||1,item.unit||'Pcs',item.rate||0,item.discount||0,item.amount||0,item.bill_after_warranty?1:0,item.warranty_end_date||null);
-    }))();
-  }
-  res.json({ id, quote_number });
-});
+app.get(
+  '/api/quotations/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute({
+      sql: 'SELECT * FROM quotations WHERE id=?',
+      args: [req.params.id],
+    });
+    const q = rows[0];
+    if (!q) return res.status(404).json({ error: 'Not found' });
+    const items = await db.execute({
+      sql: 'SELECT * FROM quotation_items WHERE quotation_id=? ORDER BY sr_no',
+      args: [req.params.id],
+    });
+    q.items = items.rows;
+    res.json(q);
+  })
+);
 
-app.put('/api/quotations/:id', authMiddleware, (req, res) => {
-  const q = req.body;
-  const logo = q.company_logo || db.prepare("SELECT value FROM settings WHERE key='company_logo'").get()?.value || '';
-  db.prepare(`UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_address=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`)
-    .run(q.company_name||'',logo,q.customer_name||'',q.customer_mobile||'',q.customer_address||'',q.date,q.validity_days||30,q.subtotal||0,q.discount||0,q.tax||0,q.tax_rate||0,q.total||0,q.notes||'',q.terms||'',q.status||'draft',req.params.id);
-  db.prepare('DELETE FROM quotation_items WHERE quotation_id=?').run(req.params.id);
-  if (q.items?.length) {
-    const ins = db.prepare(`INSERT INTO quotation_items (id,quotation_id,sr_no,product_id,product_name,product_image,shape,color,body_color,warranty,quantity,unit,rate,discount,amount,bill_after_warranty,warranty_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    q.items.forEach((item,i) => ins.run(uuidv4(),req.params.id,i+1,item.product_id||'',item.product_name||'',item.product_image||'',item.shape||'',item.color||'',item.body_color||'',item.warranty||'',item.quantity||1,item.unit||'Pcs',item.rate||0,item.discount||0,item.amount||0,item.bill_after_warranty?1:0,item.warranty_end_date||null));
-  }
-  res.json({ success: true });
-});
+app.post(
+  '/api/quotations',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const id = uuidv4();
+    const countRes = await db.execute('SELECT COUNT(*) as c FROM quotations');
+    const count = Number(countRes.rows[0]?.c ?? 0);
+    const quote_number = `QT-${String(count + 1).padStart(4, '0')}`;
+    const q = req.body;
+    const logoRow = await db.execute({
+      sql: "SELECT value FROM settings WHERE key='company_logo'",
+    });
+    const logo = q.company_logo || logoRow.rows[0]?.value || '';
 
-app.delete('/api/quotations/:id', authMiddleware, (req, res) => {
-  db.prepare('DELETE FROM quotations WHERE id=?').run(req.params.id);
-  res.json({ success: true });
-});
+    const stmts = [
+      {
+        sql: `INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_address,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        args: [
+          id,
+          quote_number,
+          q.company_name || '',
+          logo,
+          q.customer_name || '',
+          q.customer_mobile || '',
+          q.customer_address || '',
+          q.date || new Date().toISOString().split('T')[0],
+          q.validity_days || 30,
+          q.subtotal || 0,
+          q.discount || 0,
+          q.tax || 0,
+          q.tax_rate || 0,
+          q.total || 0,
+          q.notes || '',
+          q.terms || '',
+          q.status || 'draft',
+        ],
+      },
+    ];
+    if (q.items?.length) {
+      q.items.forEach((item, i) => {
+        stmts.push({
+          sql: `INSERT INTO quotation_items (id,quotation_id,sr_no,product_id,product_name,product_image,shape,color,body_color,warranty,quantity,unit,rate,discount,amount,bill_after_warranty,warranty_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          args: [
+            uuidv4(),
+            id,
+            i + 1,
+            item.product_id || '',
+            item.product_name || '',
+            item.product_image || '',
+            item.shape || '',
+            item.color || '',
+            item.body_color || '',
+            item.warranty || '',
+            item.quantity || 1,
+            item.unit || 'Pcs',
+            item.rate || 0,
+            item.discount || 0,
+            item.amount || 0,
+            item.bill_after_warranty ? 1 : 0,
+            item.warranty_end_date || null,
+          ],
+        });
+      });
+    }
+    await db.batch(stmts, 'write');
+    res.json({ id, quote_number });
+  })
+);
 
-// ── ANALYTICS ─────────────────────────────────────────────
-app.get('/api/analytics', authMiddleware, (req, res) => {
-  res.json({
-    total_quotes:   db.prepare('SELECT COUNT(*) as c FROM quotations').get().c,
-    total_revenue:  db.prepare("SELECT COALESCE(SUM(total),0) as s FROM quotations WHERE status='approved'").get().s,
-    this_month:     db.prepare("SELECT COUNT(*) as c FROM quotations WHERE strftime('%Y-%m',created_at)=strftime('%Y-%m','now')").get().c,
-    top_products:   db.prepare('SELECT product_name,SUM(quantity) as total_qty,SUM(amount) as total_amount FROM quotation_items GROUP BY product_name ORDER BY total_amount DESC LIMIT 5').all(),
-    recent:         db.prepare('SELECT * FROM quotations ORDER BY created_at DESC LIMIT 5').all(),
-    status_counts:  db.prepare('SELECT status,COUNT(*) as c FROM quotations GROUP BY status').all(),
-  });
-});
+app.put(
+  '/api/quotations/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const q = req.body;
+    const logoRow = await db.execute({
+      sql: "SELECT value FROM settings WHERE key='company_logo'",
+    });
+    const logo = q.company_logo || logoRow.rows[0]?.value || '';
 
-// ── EXCEL EXPORT ──────────────────────────────────────────
-app.get('/api/products/export', authMiddleware, (req, res) => {
-  const products = db.prepare('SELECT name,code,description,rate,unit,mrp,category,image as imageUrl,stock,min_stock,track_stock FROM products ORDER BY name').all();
-  const ws = XLSX.utils.json_to_sheet(products);
-  ws['!cols'] = [{wch:30},{wch:12},{wch:40},{wch:10},{wch:10},{wch:10},{wch:15},{wch:40},{wch:10},{wch:12},{wch:12}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Products');
-  const buf = XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
-  res.setHeader('Content-Disposition','attachment; filename="products.xlsx"');
-  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.send(buf);
-});
+    const stmts = [
+      {
+        sql: `UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_address=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`,
+        args: [
+          q.company_name || '',
+          logo,
+          q.customer_name || '',
+          q.customer_mobile || '',
+          q.customer_address || '',
+          q.date,
+          q.validity_days || 30,
+          q.subtotal || 0,
+          q.discount || 0,
+          q.tax || 0,
+          q.tax_rate || 0,
+          q.total || 0,
+          q.notes || '',
+          q.terms || '',
+          q.status || 'draft',
+          req.params.id,
+        ],
+      },
+      {
+        sql: 'DELETE FROM quotation_items WHERE quotation_id=?',
+        args: [req.params.id],
+      },
+    ];
+    if (q.items?.length) {
+      q.items.forEach((item, i) => {
+        stmts.push({
+          sql: `INSERT INTO quotation_items (id,quotation_id,sr_no,product_id,product_name,product_image,shape,color,body_color,warranty,quantity,unit,rate,discount,amount,bill_after_warranty,warranty_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          args: [
+            uuidv4(),
+            req.params.id,
+            i + 1,
+            item.product_id || '',
+            item.product_name || '',
+            item.product_image || '',
+            item.shape || '',
+            item.color || '',
+            item.body_color || '',
+            item.warranty || '',
+            item.quantity || 1,
+            item.unit || 'Pcs',
+            item.rate || 0,
+            item.discount || 0,
+            item.amount || 0,
+            item.bill_after_warranty ? 1 : 0,
+            item.warranty_end_date || null,
+          ],
+        });
+      });
+    }
+    await db.batch(stmts, 'write');
+    res.json({ success: true });
+  })
+);
 
-// ── EXCEL IMPORT ──────────────────────────────────────────
-app.post('/api/products/import', authMiddleware, upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  try {
-    const wb = XLSX.readFile(req.file.path);
+app.delete(
+  '/api/quotations/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    await db.execute({ sql: 'DELETE FROM quotations WHERE id=?', args: [req.params.id] });
+    res.json({ success: true });
+  })
+);
+
+// ── ANALYTICS ───────────────────────────────────────────────
+app.get(
+  '/api/analytics',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const [total_quotes, total_revenue, this_month, top_products, recent, status_counts] = await Promise.all([
+      db.execute('SELECT COUNT(*) as c FROM quotations'),
+      db.execute("SELECT COALESCE(SUM(total),0) as s FROM quotations WHERE status='approved'"),
+      db.execute("SELECT COUNT(*) as c FROM quotations WHERE strftime('%Y-%m',created_at)=strftime('%Y-%m','now')"),
+      db.execute(
+        'SELECT product_name,SUM(quantity) as total_qty,SUM(amount) as total_amount FROM quotation_items GROUP BY product_name ORDER BY total_amount DESC LIMIT 5'
+      ),
+      db.execute('SELECT * FROM quotations ORDER BY created_at DESC LIMIT 5'),
+      db.execute('SELECT status,COUNT(*) as c FROM quotations GROUP BY status'),
+    ]);
+    res.json({
+      total_quotes: Number(total_quotes.rows[0]?.c ?? 0),
+      total_revenue: total_revenue.rows[0]?.s ?? 0,
+      this_month: Number(this_month.rows[0]?.c ?? 0),
+      top_products: top_products.rows,
+      recent: recent.rows,
+      status_counts: status_counts.rows,
+    });
+  })
+);
+
+// ── EXCEL EXPORT / IMPORT ───────────────────────────────────
+app.get(
+  '/api/products/export',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows: products } = await db.execute(
+      'SELECT name,code,description,rate,unit,mrp,category,image as imageUrl,stock,min_stock,track_stock FROM products ORDER BY name'
+    );
+    const ws = XLSX.utils.json_to_sheet(products);
+    ws['!cols'] = [
+      { wch: 30 },
+      { wch: 12 },
+      { wch: 40 },
+      { wch: 10 },
+      { wch: 10 },
+      { wch: 10 },
+      { wch: 15 },
+      { wch: 40 },
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Products');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="products.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(buf));
+  })
+);
+
+app.post(
+  '/api/products/import',
+  authMiddleware,
+  importUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file?.buffer) return res.status(400).json({ error: 'No file uploaded' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-    const ins = db.prepare('INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-    let imported = 0, skipped = 0, errors = [];
-    db.transaction(() => rows.forEach((row, idx) => {
-      try {
-        const name = String(row.name||row.Name||row['Product Name']||'').trim();
-        if (!name) { skipped++; return; }
-        // Duplicate detection by name
-        const existing = db.prepare('SELECT id FROM products WHERE LOWER(name)=LOWER(?)').get(name);
-        if (existing) { skipped++; return; }
-        const imageUrl = String(row.imageUrl||row.image||row.Image||row['Image URL']||'').trim();
-        const description = String(row.description||row.Description||'').trim();
-        const trackStockRaw = row.track_stock ?? row.trackStock ?? row['Track Stock'] ?? row['track stock'] ?? '';
-        const trackStock = ['1', 'true', 'yes', 'y'].includes(String(trackStockRaw).trim().toLowerCase());
-        ins.run(
-          uuidv4(),
-          name,
-          String(row.code||row.Code||'').trim(),
-          description,
-          Number(row.rate||row.Rate||row.Price||0),
-          String(row.unit||row.Unit||'Pcs').trim(),
-          imageUrl,
-          Number(row.mrp||row.MRP||0)||null,
-          String(row.category||row.Category||'').trim(),
-          Number(row.stock||0),
-          Number(row.min_stock||5),
-          trackStock ? 1 : 0
-        );
-        imported++;
-      } catch(e) { errors.push(`Row ${idx+2}: ${e.message}`); }
-    }))();
-    fs.unlinkSync(req.file.path);
-    res.json({ success: true, imported, skipped, errors: errors.slice(0,10) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+    let imported = 0;
+    let skipped = 0;
+    const errors = [];
 
-// ── FILE UPLOAD ───────────────────────────────────────────
-app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
-  res.json({ url: `/uploads/${req.file.filename}` });
-});
+    const tx = await db.transaction('write');
+    try {
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        try {
+          const name = String(row.name || row.Name || row['Product Name'] || '').trim();
+          if (!name) {
+            skipped++;
+            continue;
+          }
+          const dup = await tx.execute({
+            sql: 'SELECT id FROM products WHERE LOWER(name)=LOWER(?)',
+            args: [name],
+          });
+          if (dup.rows[0]) {
+            skipped++;
+            continue;
+          }
+          const imageUrl = String(row.imageUrl || row.image || row.Image || row['Image URL'] || '').trim();
+          const description = String(row.description || row.Description || '').trim();
+          const trackStockRaw = row.track_stock ?? row.trackStock ?? row['Track Stock'] ?? row['track stock'] ?? '';
+          const trackStock = ['1', 'true', 'yes', 'y'].includes(String(trackStockRaw).trim().toLowerCase());
+          await tx.execute({
+            sql: 'INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            args: [
+              uuidv4(),
+              name,
+              String(row.code || row.Code || '').trim(),
+              description,
+              Number(row.rate || row.Rate || row.Price || 0),
+              String(row.unit || row.Unit || 'Pcs').trim(),
+              imageUrl,
+              Number(row.mrp || row.MRP || 0) || null,
+              String(row.category || row.Category || '').trim(),
+              Number(row.stock || 0),
+              Number(row.min_stock || 5),
+              trackStock ? 1 : 0,
+            ],
+          });
+          imported++;
+        } catch (e) {
+          errors.push(`Row ${idx + 2}: ${e.message}`);
+        }
+      }
+      await tx.commit();
+    } catch (e) {
+      await tx.rollback();
+      throw e;
+    } finally {
+      tx.close();
+    }
 
-// ── HEALTH CHECK (no auth) ────────────────────────────────
+    res.json({ success: true, imported, skipped, errors: errors.slice(0, 10) });
+  })
+);
+
+// ── IMAGE UPLOAD (Cloudinary) ───────────────────────────────
+app.post(
+  '/api/upload',
+  authMiddleware,
+  imageUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file?.path) return res.status(400).json({ error: 'No file' });
+    res.json({ url: req.file.path });
+  })
+);
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-// ── START — bind to 0.0.0.0 so LAN devices can reach us ──
-app.listen(PORT, '0.0.0.0', () => {
-  // Detect LAN IP to print a helpful message
-  const { networkInterfaces } = require('os');
-  const nets = networkInterfaces();
-  let lanIP = 'unknown';
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        lanIP = net.address;
-        break;
-      }
-    }
-    if (lanIP !== 'unknown') break;
-  }
+// ── Optional: serve CRA build from same process (e.g. single-host deploy) ──
+const clientBuild = path.join(__dirname, '..', 'client', 'build');
+if (process.env.SERVE_CLIENT === 'true' && fs.existsSync(path.join(clientBuild, 'index.html'))) {
+  app.use(express.static(clientBuild));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientBuild, 'index.html'));
+  });
+}
 
-  console.log('\n╔══════════════════════════════════════════════╗');
-  console.log('║        QuoteFlow Server — READY              ║');
-  console.log('╠══════════════════════════════════════════════╣');
-  console.log(`║  Local:    http://localhost:${PORT}              ║`);
-  console.log(`║  Network:  http://${lanIP}:${PORT}       ║`);
-  console.log('╠══════════════════════════════════════════════╣');
-  console.log(`║  Health:   http://${lanIP}:${PORT}/api/health ║`);
-  console.log('╚══════════════════════════════════════════════╝\n');
-
-  const users = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-  if (users === 0) {
-    console.log(`⚠️  No users yet.`);
-    console.log(`   Register at http://${lanIP}:3000/register`);
-    console.log(`   or         http://localhost:3000/register\n`);
-  } else {
-    console.log(`👤  ${users} user(s) in database.\n`);
-  }
-  app.use(express.static(path.join(__dirname, "../client/build")));
-
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/build/index.html"));
+// ── Errors ──────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  console.error(err);
+  res.status(500).json({
+    error: NODE_ENV === 'production' ? 'Internal server error' : err.message || 'Server error',
+  });
 });
+
+async function start() {
+  await initDatabase();
+
+  if (NODE_ENV === 'production' && (!process.env.JWT_SECRET || JWT_SECRET === 'quoteflow_secret_change_in_production')) {
+    console.warn('[security] Set a strong, unique JWT_SECRET in production (Render environment variables).');
+  }
+
+  app.listen(PORT, '0.0.0.0', async () => {
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    let lanIP = 'unknown';
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          lanIP = net.address;
+          break;
+        }
+      }
+      if (lanIP !== 'unknown') break;
+    }
+
+    console.log('\n╔══════════════════════════════════════════════╗');
+    console.log('║        QuoteFlow Server — READY              ║');
+    console.log('╠══════════════════════════════════════════════╣');
+    console.log(`║  Local:    http://localhost:${PORT}              ║`);
+    console.log(`║  Network:  http://${lanIP}:${PORT}       ║`);
+    console.log('╠══════════════════════════════════════════════╣');
+    console.log(`║  Health:   http://${lanIP}:${PORT}/api/health ║`);
+    console.log('╚══════════════════════════════════════════════╝\n');
+
+    const u = await db.execute('SELECT COUNT(*) as c FROM users');
+    const users = Number(u.rows[0]?.c ?? 0);
+    if (users === 0) {
+      console.log('⚠️  No users yet.');
+      console.log(`   Register at http://${lanIP}:3000/register`);
+      console.log('   or         http://localhost:3000/register\n');
+    } else {
+      console.log(`👤  ${users} user(s) in database.\n`);
+    }
+  });
+}
+
+start().catch((e) => {
+  console.error('Failed to start server:', e);
+  process.exit(1);
 });

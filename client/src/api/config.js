@@ -1,26 +1,22 @@
 // ─────────────────────────────────────────────────────────
-// API Base URL — Dynamic, works from any device on the LAN
+// API base — Vercel / production vs LAN / local dev
 // ─────────────────────────────────────────────────────────
 //
-// Priority:
-//  1. REACT_APP_API_URL env var  (production override)
-//  2. window.location.hostname   (auto LAN detection at runtime)
-//
-// Examples:
-//  Phone opens  http://192.168.1.42:3000  → API = http://192.168.1.42:3001
-//  Laptop opens http://localhost:3000     → API = http://localhost:3001
-//  Production   REACT_APP_API_URL=https://api.myapp.com
+// 1) REACT_APP_API_URL — set on Vercel to your Render API origin (https://…)
+// 2) Otherwise — same machine / LAN: browser hostname + API port (default 3001)
 
 const API_PORT = process.env.REACT_APP_API_PORT || 3001;
 
 export const API_BASE =
   process.env.REACT_APP_API_URL ||
-  `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
+  `http://${window.location.hostname}:${API_PORT}`;
 
 export default API_BASE;
 
-export function serverUrl(path) {
-  if (!path) return '';
-  if (path.startsWith('http')) return path;
-  return `${API_BASE}${path}`;
+export function serverUrl(p) {
+  if (!p) return '';
+  if (/^https?:\/\//i.test(p)) return p;
+  const base = API_BASE.replace(/\/$/, '');
+  const path = p.startsWith('/') ? p : `/${p}`;
+  return `${base}${path}`;
 }
