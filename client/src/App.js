@@ -14,6 +14,11 @@ import Inventory from './pages/Inventory';
 import Settings from './pages/Settings';
 import './App.css';
 
+import axios from 'axios';
+import API_BASE from './api/config';
+
+axios.defaults.baseURL = API_BASE;
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30000, retry: 1 } }
 });
