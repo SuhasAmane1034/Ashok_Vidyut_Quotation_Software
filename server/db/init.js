@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS quotations (
   customer_name TEXT,
   customer_mobile TEXT,
   customer_address TEXT,
+  salesperson TEXT,
   date TEXT,
   validity_days INTEGER DEFAULT 30,
   subtotal REAL DEFAULT 0,
@@ -140,6 +141,12 @@ async function initDatabase() {
 
   try {
     await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''");
+  } catch (_) {
+    /* column already exists */
+  }
+
+  try {
+    await db.execute("ALTER TABLE quotations ADD COLUMN salesperson TEXT");
   } catch (_) {
     /* column already exists */
   }

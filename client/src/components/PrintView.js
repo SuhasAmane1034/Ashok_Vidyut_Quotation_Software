@@ -57,16 +57,18 @@ function formatDate(d) {
 const thStyle = {
   padding: '6px 4px',
   textAlign: 'center',
-  fontWeight: 700,
+  fontWeight: 600,
   color: '#374151',
-  verticalAlign: 'middle'
+  verticalAlign: 'middle',
+  fontFamily: "'Inter', sans-serif"
 };
 
 const tdStyle = {
   padding: '5px 4px',
   textAlign: 'center',
   color: '#374151',
-  verticalAlign: 'middle'
+  verticalAlign: 'middle',
+  fontFamily: "'Inter', sans-serif"
 };
 
 const smallHeading = {
@@ -75,7 +77,8 @@ const smallHeading = {
   color: '#9ca3af',
   textTransform: 'uppercase',
   letterSpacing: 1.5,
-  marginBottom: 5
+  marginBottom: 5,
+  fontFamily: "'Poppins', sans-serif"
 };
 
 function PageHeader({ quotation, settings, continued = false }) {
@@ -101,10 +104,11 @@ function PageHeader({ quotation, settings, continued = false }) {
           <div>
             <div style={{
               fontSize: 22,
-              fontWeight: 900,
+              fontWeight: 350,
               color: '#111827',
               letterSpacing: '-0.5px',
-              textTransform: 'uppercase'
+              textTransform: 'uppercase',
+              fontFamily: "'Poppins', sans-serif"
             }}>
               {quotation.company_name || settings?.company_name || 'YOUR COMPANY'}
             </div>
@@ -112,13 +116,13 @@ function PageHeader({ quotation, settings, continued = false }) {
             {!continued && (
               <>
                 {settings?.company_address && (
-                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, whiteSpace: 'pre-line' }}>
+                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, whiteSpace: 'pre-line', fontFamily: "'Inter', sans-serif" }}>
                     {settings.company_address}
                   </div>
                 )}
 
                 {settings?.company_phone && (
-                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2 }}>
+                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
                     📞 {settings.company_phone}
                   </div>
                 )}
@@ -126,7 +130,7 @@ function PageHeader({ quotation, settings, continued = false }) {
             )}
 
             {continued && (
-              <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 2 }}>
+              <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
                 Continued from previous page…
               </div>
             )}
@@ -140,16 +144,17 @@ function PageHeader({ quotation, settings, continued = false }) {
             color: '#6b7280',
             textTransform: 'uppercase',
             letterSpacing: 3,
-            marginBottom: 8
+            marginBottom: 8,
+            fontFamily: "'Poppins', sans-serif"
           }}>
             {continued ? 'Quotation (Cont.)' : 'Quotation'}
           </div>
 
-          <table style={{ fontSize: 11, marginLeft: 'auto', borderCollapse: 'collapse' }}>
+          <table style={{ fontSize: 11, marginLeft: 'auto', borderCollapse: 'collapse', fontFamily: "'Inter', sans-serif" }}>
             <tbody>
               <tr>
                 <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Quote No:</td>
-                <td style={{ fontWeight: 800, fontFamily: 'monospace', color: '#111827', fontSize: 12 }}>
+                <td style={{ fontWeight: 800, fontFamily: "'Courier New', monospace", color: '#111827', fontSize: 12, fontVariantNumeric: 'slashed-zero' }}>
                   {quotation.quote_number}
                 </td>
               </tr>
@@ -165,6 +170,13 @@ function PageHeader({ quotation, settings, continued = false }) {
                   <td style={{ fontWeight: 600, color: '#111827' }}>
                     {formatDate(new Date(new Date(quotation.date).getTime() + Number(quotation.validity_days) * 86400000))}
                   </td>
+                </tr>
+              )}
+
+              {quotation.salesperson && (
+                <tr>
+                  <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Sales Person:</td>
+                  <td style={{ fontWeight: 600, color: '#111827' }}>{quotation.salesperson}</td>
                 </tr>
               )}
             </tbody>
@@ -232,7 +244,7 @@ function ItemsTable({ items, startIndex = 0, colVis = {} }) {
             <td style={{ ...tdStyle, fontWeight: 600 }}>{item.quantity}</td>
             {show('unit') && <td style={tdStyle}>{item.unit || '—'}</td>}
 
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace' }}>
+            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'Courier New', monospace", fontVariantNumeric: 'slashed-zero', fontWeight: 700 }}>
               {formatINR(item.rate)}
             </td>
 
@@ -245,9 +257,10 @@ function ItemsTable({ items, startIndex = 0, colVis = {} }) {
             <td style={{
               ...tdStyle,
               textAlign: 'right',
-              fontFamily: 'monospace',
+              fontFamily: "'Courier New', monospace",
               fontWeight: 700,
-              color: '#111827'
+              color: '#111827',
+              fontVariantNumeric: 'slashed-zero'
             }}>
               {formatINR(item.amount)}
             </td>
@@ -290,7 +303,15 @@ export default function PrintView({ quotation, settings, onClose }) {
     : null;
 
   const subtotal = items.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const itemDiscountAmt = items.reduce((s, r) => {
+    const rate = Number(r.rate) || 0;
+    const quantity = Number(r.quantity) || 0;
+    const discount = Number(r.discount) || 0;
+    const grossAmount = rate * quantity;
+    return s + (grossAmount * discount / 100);
+  }, 0);
   const discountAmt = Number(quotation.discount) || 0;
+  const totalMoneySaved = itemDiscountAmt + discountAmt;
   const afterDisc = subtotal - discountAmt;
   const taxAmt = Number(quotation.tax) || 0;
   const grandTotal = afterDisc + taxAmt;
@@ -311,6 +332,7 @@ export default function PrintView({ quotation, settings, onClose }) {
       <html>
         <head>
           <title>Quotation ${quotation.quote_number || ''}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
           <style>
             @page {
               size: A4 portrait;
@@ -326,7 +348,10 @@ export default function PrintView({ quotation, settings, onClose }) {
               margin: 0;
               padding: 0;
               background: #ffffff;
-              font-family: Arial, sans-serif;
+              font-family: 'Inter', 'Segoe UI', sans-serif;
+              font-feature-settings: "zero" 1;
+              font-variant-numeric: slashed-zero;
+              -webkit-font-smoothing: antialiased;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
@@ -447,23 +472,6 @@ export default function PrintView({ quotation, settings, onClose }) {
             />
           </div>
         )}
-
-        <div style={{ marginTop: 32, width: 180, textAlign: 'center' }}>
-          {signatureSrc ? (
-            <img
-              src={signatureSrc}
-              alt="Signature"
-              style={{ maxHeight: 56, maxWidth: 180, objectFit: 'contain', marginBottom: 4 }}
-            />
-          ) : (
-            <div style={{ height: 40 }} />
-          )}
-
-          <div style={{ borderBottom: '1px solid #9ca3af', marginBottom: 4 }} />
-          <div style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600 }}>
-            Authorized Signature
-          </div>
-        </div>
       </div>
 
       <div style={{
@@ -479,7 +487,9 @@ export default function PrintView({ quotation, settings, onClose }) {
         <div style={{ fontSize: 11, color: '#6b7280' }}>
           {[
             { label: 'Subtotal', value: formatINR(subtotal) },
-            discountAmt > 0 && { label: 'Discount', value: `- ${formatINR(discountAmt)}` },
+            itemDiscountAmt > 0 && { label: 'Item Discount', value: `- ${formatINR(itemDiscountAmt)}` },
+            discountAmt > 0 && { label: 'Additional Discount', value: `- ${formatINR(discountAmt)}` },
+            totalMoneySaved > 0 && { label: 'Total Money Saved', value: formatINR(totalMoneySaved), highlight: true },
             taxAmt > 0 && {
               label: `${settings?.tax_label || 'GST'} (${quotation.tax_rate || 18}%)`,
               value: formatINR(taxAmt)
@@ -491,8 +501,12 @@ export default function PrintView({ quotation, settings, onClose }) {
                 display: 'flex',
                 justifyContent: 'space-between',
                 gap: 8,
-                marginBottom: 5,
-                alignItems: 'center'
+                marginBottom: row.highlight ? 8 : 5,
+                alignItems: 'center',
+                paddingBottom: row.highlight ? 8 : 0,
+                borderBottom: row.highlight ? '1px solid #d1d5db' : 'none',
+                fontWeight: row.highlight ? 700 : 400,
+                color: row.highlight ? '#059669' : '#6b7280'
               }}>
                 <span>{row.label}</span>
                 <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>
@@ -750,23 +764,6 @@ export default function PrintView({ quotation, settings, onClose }) {
                   <TotalsBlock />
                 </div>
               )}
-
-              <div className="avoid-break" style={{
-                marginTop: 28,
-                paddingTop: 10,
-                borderTop: '1px solid #f3f4f6',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                fontSize: 9,
-                color: '#d1d5db'
-              }}>
-                <span>QuoteFlow</span>
-                <span>
-                  Page {pageIndex + 1} of {pages.length}
-                  {!isLastPage ? ' — Continued on next page…' : ` · ${quotation.quote_number}`}
-                </span>
-              </div>
             </div>
           );
         })}

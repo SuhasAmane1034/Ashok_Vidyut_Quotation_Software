@@ -370,6 +370,7 @@ export default function QuotationBuilder() {
   const [header, setHeader] = useState({
     company_name:'', company_logo:'',
     customer_name:'', customer_mobile:'', customer_address:'',
+    salesperson: '',
     date: new Date().toISOString().split('T')[0],
     validity_days: 30, notes:'', terms:'', status:'draft',
     subtotal:0, discount:0, tax:0, tax_rate:18, total:0,
@@ -402,8 +403,8 @@ export default function QuotationBuilder() {
         company_name: q.company_name,
         company_logo: q.company_logo || settings?.company_logo || '',
         customer_name: q.customer_name, customer_mobile: q.customer_mobile,
-        customer_address: q.customer_address, date: q.date,
-        validity_days: q.validity_days, notes: q.notes, terms: q.terms,
+        customer_address: q.customer_address, salesperson: q.salesperson || '',
+        date: q.date, validity_days: q.validity_days, notes: q.notes, terms: q.terms,
         status: q.status, subtotal: q.subtotal, discount: q.discount,
         tax: q.tax, tax_rate: q.tax_rate, total: q.total,
       });
@@ -602,11 +603,20 @@ export default function QuotationBuilder() {
                   placeholder="Customer / Company name" />
               </div>
               <div className="form-group">
+                <label>Salesperson</label>
+                <input value={header.salesperson}
+                  onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}
+                  placeholder="Sales person name" />
+              </div>
+            </div>
+            <div className="grid-2">
+              <div className="form-group">
                 <label>Mobile</label>
                 <input value={header.customer_mobile}
                   onChange={e => setHeader(h => ({ ...h, customer_mobile: e.target.value }))}
                   placeholder="+91 XXXXX XXXXX" />
               </div>
+              <div className="form-group"></div>
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label>Address / City</label>
@@ -974,11 +984,20 @@ export default function QuotationBuilder() {
                     placeholder="Customer / Company name" />
                 </div>
                 <div className="form-group">
+                  <label>Salesperson</label>
+                  <input value={header.salesperson}
+                    onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}
+                    placeholder="Sales person name" />
+                </div>
+              </div>
+              <div className="grid-2">
+                <div className="form-group">
                   <label>Mobile</label>
                   <input value={header.customer_mobile}
                     onChange={e => setHeader(h => ({ ...h, customer_mobile: e.target.value }))}
                     placeholder="+91 XXXXX XXXXX" />
                 </div>
+                <div className="form-group"></div>
               </div>
               <div className="form-group">
                 <label>Address / City</label>

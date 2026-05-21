@@ -381,7 +381,7 @@ app.post(
 
     const stmts = [
       {
-        sql: `INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_address,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        sql: `INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_address,salesperson,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         args: [
           id,
           quote_number,
@@ -390,6 +390,7 @@ app.post(
           q.customer_name || '',
           q.customer_mobile || '',
           q.customer_address || '',
+          q.salesperson || '',
           q.date || new Date().toISOString().split('T')[0],
           q.validity_days || 30,
           q.subtotal || 0,
@@ -449,13 +450,14 @@ app.put(
 
     const stmts = [
       {
-        sql: `UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_address=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`,
+        sql: `UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_address=?,salesperson=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`,
         args: [
           q.company_name || '',
           logo,
           q.customer_name || '',
           q.customer_mobile || '',
           q.customer_address || '',
+          q.salesperson || '',
           q.date,
           q.validity_days || 30,
           q.subtotal || 0,
