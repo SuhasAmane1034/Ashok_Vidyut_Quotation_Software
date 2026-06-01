@@ -11,11 +11,15 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.3",
     "react-scripts": "5.0.1",
-    "react-to-print": "^2.15.1"
+    "react-to-print": "^2.15.1",
+    "to-words": "^5.6.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build"
+    "start": "craco start",
+    "build": "craco build"
+  },
+  "devDependencies": {
+    "@craco/craco": "^7.1.0"
   },
   "browserslist": {
     "production": [

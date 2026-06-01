@@ -170,7 +170,7 @@ function InlineProductForm({ draft, onDraftChange, onSaved, onCancel, addToast }
 }
 
 /* ── Product Autocomplete Cell (with Create option) ──── */
-function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, onInlineToggle, showInline, inlineTyped }) {
+const ProductCell = React.memo(function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, onInlineToggle, showInline, inlineTyped }) {
   const [query, setQuery]     = useState(value || '');
   const [results, setResults] = useState([]);
   const [open, setOpen]       = useState(false);
@@ -197,7 +197,7 @@ function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, o
     setLoading(true);
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await axios.get(`/api/products?search=${encodeURIComponent(query)}`);
+        const res = await axios.get(`/api/products/search?q=${encodeURIComponent(query)}`);
         setResults(res.data);
         setIdx(0);
       } catch {
@@ -299,10 +299,10 @@ function ProductCell({ value, onChange, onSelect, onKeyDown, rowIdx, addToast, o
       </div>
     </div>
   );
-}
+});
 
 /* ── Shortcut Cell ─────────────────────────────────────── */
-function ShortcutCell({ value, options = [], onChange, onKeyDown, placeholder }) {
+const ShortcutCell = React.memo(function ShortcutCell({ value, options = [], onChange, onKeyDown, placeholder }) {
   const [input, setInput] = useState(value || '');
   const [open, setOpen]   = useState(false);
   useEffect(() => { setInput(value || ''); }, [value]);
@@ -341,7 +341,7 @@ function ShortcutCell({ value, options = [], onChange, onKeyDown, placeholder })
       )}
     </div>
   );
-}
+});
 
 function Amt({ value, currency }) {
   if (!value || Number(value) === 0) return <span style={{ color:'var(--text-muted)' }}>—</span>;
@@ -369,7 +369,7 @@ export default function QuotationBuilder() {
 
   const [header, setHeader] = useState({
     company_name:'', company_logo:'',
-    customer_name:'', customer_mobile:'', customer_address:'',
+    customer_name:'', customer_mobile:'', customer_city:'', customer_address:'',
     salesperson: '',
     date: new Date().toISOString().split('T')[0],
     validity_days: 30, notes:'', terms:'', status:'draft',
@@ -380,6 +380,8 @@ export default function QuotationBuilder() {
   const [applyTax, setApplyTax]         = useState(false);
   const [quoteNumber, setQuoteNumber]   = useState('');
   const [inlineRowIdx, setInlineRowIdx] = useState(null); // which row has inline form open
+  const [salespersons, setSalespersons] = useState([]);
+  const [showAddress, setShowAddress] = useState(false);
 
   useEffect(() => {
     if (settings && !loaded.current && !id) {
@@ -403,6 +405,7 @@ export default function QuotationBuilder() {
         company_name: q.company_name,
         company_logo: q.company_logo || settings?.company_logo || '',
         customer_name: q.customer_name, customer_mobile: q.customer_mobile,
+        customer_city: q.customer_city || '',
         customer_address: q.customer_address, salesperson: q.salesperson || '',
         date: q.date, validity_days: q.validity_days, notes: q.notes, terms: q.terms,
         status: q.status, subtotal: q.subtotal, discount: q.discount,
@@ -413,8 +416,24 @@ export default function QuotationBuilder() {
       setRows(q.items?.length
         ? [...q.items.map(it => ({ ...it, _id: it.id || Math.random().toString(36).slice(2) })), emptyRow()]
         : [emptyRow()]);
+      setShowAddress(!!q.customer_address);
       loaded.current = true;
     }).catch(() => addToast('Failed to load quotation', 'error'));
+  }, [id]);
+
+  useEffect(() => {
+    axios.get('/api/salespersons')
+      .then((res) => {
+        const list = Array.isArray(res.data) ? res.data : [];
+        setSalespersons(list);
+        if (!id) {
+          const defaultSp = list.find((s) => s.is_default);
+          if (defaultSp) {
+            setHeader((h) => (h.salesperson ? h : { ...h, salesperson: defaultSp.name }));
+          }
+        }
+      })
+      .catch(() => setSalespersons([]));
   }, [id]);
 
   const calcTotals = useCallback((rowList, disc, taxOn, taxRate) => {
@@ -479,13 +498,55 @@ export default function QuotationBuilder() {
 
   useEffect(() => { pushTotals(rows, overallDiscount, applyTax); }, [overallDiscount, applyTax]);
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setRows((prev) => [...prev, emptyRow()]);
+        setTimeout(() => {
+          document.querySelector(`[data-row="${rows.length}"][data-field="product_name"] input`)?.focus();
+        }, 0);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [rows.length]);
+
   const handleKeyNav = (e, rowIdx, field) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
     const fields = ['product_name','shape','color','body_color','warranty','quantity','unit','rate','discount'];
     const fi = fields.indexOf(field);
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      document.querySelector(`[data-row="${rowIdx}"][data-field="${fields[Math.min(fi + 1, fields.length - 1)]}"] input, [data-row="${rowIdx}"][data-field="${fields[Math.min(fi + 1, fields.length - 1)]}"] select`)?.focus();
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      document.querySelector(`[data-row="${rowIdx}"][data-field="${fields[Math.max(fi - 1, 0)]}"] input, [data-row="${rowIdx}"][data-field="${fields[Math.max(fi - 1, 0)]}"] select`)?.focus();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      document.querySelector(`[data-row="${rowIdx + 1}"][data-field="${field}"] input, [data-row="${rowIdx + 1}"][data-field="${field}"] select`)?.focus();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      document.querySelector(`[data-row="${Math.max(rowIdx - 1, 0)}"][data-field="${field}"] input, [data-row="${Math.max(rowIdx - 1, 0)}"][data-field="${field}"] select`)?.focus();
+      return;
+    }
+    if (e.key !== 'Enter' && e.key !== 'Tab') return;
+    e.preventDefault();
+    if (e.key === 'Tab') {
+      document.querySelector(`[data-row="${rowIdx + 1}"][data-field="product_name"] input`)?.focus();
+      return;
+    }
     if (fi < fields.length - 1) {
-      document.querySelector(`[data-row="${rowIdx}"][data-field="${fields[fi+1]}"] input`)?.focus();
+      document.querySelector(`[data-row="${rowIdx}"][data-field="${fields[fi+1]}"] input, [data-row="${rowIdx}"][data-field="${fields[fi+1]}"] select`)?.focus();
     } else {
       document.querySelector(`[data-row="${rowIdx+1}"][data-field="product_name"] input`)?.focus();
     }
@@ -594,7 +655,7 @@ export default function QuotationBuilder() {
         <>
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="card-header"><span className="card-title">Customer Details</span></div>
-          <div className="card-body">
+          <div className="card-body compact-customer-card">
             <div className="grid-2">
               <div className="form-group">
                 <label>Customer Name</label>
@@ -604,9 +665,13 @@ export default function QuotationBuilder() {
               </div>
               <div className="form-group">
                 <label>Salesperson</label>
-                <input value={header.salesperson}
-                  onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}
-                  placeholder="Sales person name" />
+                <select value={header.salesperson}
+                  onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}>
+                  <option value="">Select salesperson</option>
+                  {salespersons.map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="grid-2">
@@ -616,18 +681,31 @@ export default function QuotationBuilder() {
                   onChange={e => setHeader(h => ({ ...h, customer_mobile: e.target.value }))}
                   placeholder="+91 XXXXX XXXXX" />
               </div>
-              <div className="form-group"></div>
+              <div className="form-group">
+                <label>City</label>
+                <input value={header.customer_city}
+                  onChange={e => setHeader(h => ({ ...h, customer_city: e.target.value }))}
+                  placeholder="City" />
+              </div>
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label>Address / City</label>
-              <input value={header.customer_address}
-                onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))}
-                placeholder="City, State" />
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setShowAddress((v) => !v)}>
+                {showAddress ? 'Hide Full Address' : 'Add Full Address'}
+              </button>
             </div>
+            {showAddress && (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Full Address</label>
+                <textarea value={header.customer_address}
+                  onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))}
+                  placeholder="Address line, area, city, state"
+                  rows={2} />
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card product-grid-card" style={{ marginBottom: 14 }}>
           <div className="card-header products-card-header">
             <div>
               <span className="card-title">Products</span>
@@ -638,7 +716,7 @@ export default function QuotationBuilder() {
               )}
             </div>
             <span style={{ fontSize:11, color:'var(--text-muted)' }}>
-              ⌨ <strong>Enter</strong> = next field &nbsp;·&nbsp; type shortcut in Shape / Color / Warranty
+              ⌨ Enter: next field · Tab: next row · Arrows: navigate · Ctrl+S save · Ctrl+N new row
             </span>
             <button className="btn btn-secondary btn-sm" onClick={() => setShowDiscount(v => !v)}>
               {showDiscount ? <Eye size={13} /> : <EyeOff size={13} />} Discount {showDiscount ? 'ON' : 'OFF'}
@@ -985,9 +1063,13 @@ export default function QuotationBuilder() {
                 </div>
                 <div className="form-group">
                   <label>Salesperson</label>
-                  <input value={header.salesperson}
-                    onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}
-                    placeholder="Sales person name" />
+                  <select value={header.salesperson}
+                    onChange={e => setHeader(h => ({ ...h, salesperson: e.target.value }))}>
+                    <option value="">Select salesperson</option>
+                    {salespersons.map((s) => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid-2">
@@ -997,13 +1079,19 @@ export default function QuotationBuilder() {
                     onChange={e => setHeader(h => ({ ...h, customer_mobile: e.target.value }))}
                     placeholder="+91 XXXXX XXXXX" />
                 </div>
-                <div className="form-group"></div>
+                <div className="form-group">
+                  <label>City</label>
+                  <input value={header.customer_city}
+                    onChange={e => setHeader(h => ({ ...h, customer_city: e.target.value }))}
+                    placeholder="City" />
+                </div>
               </div>
               <div className="form-group">
-                <label>Address / City</label>
-                <input value={header.customer_address}
+                <label>Address</label>
+                <textarea value={header.customer_address}
                   onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))}
-                  placeholder="City, State" />
+                  placeholder="Full address"
+                  rows={2} />
               </div>
               <div className="form-group">
                 <label>Notes</label>

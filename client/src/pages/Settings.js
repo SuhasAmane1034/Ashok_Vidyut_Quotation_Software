@@ -62,7 +62,7 @@ const ALL_COLUMNS = [
 const ACCENT_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#0ea5e9', '#f97316', '#14b8a6'];
 
 export default function Settings() {
-  const { settings, updateSettings } = useApp();
+  const { settings, updateSettings, addToast } = useApp();
   const [form, setForm] = useState({});
   const [shapes, setShapes] = useState([]);
   const [colors, setColors] = useState([]);
@@ -70,6 +70,8 @@ export default function Settings() {
   const [warranties, setWarranties] = useState([]);
   const [colVis, setColVis] = useState({});
   const [uploading, setUploading] = useState(false);
+  const [salespersons, setSalespersons] = useState([]);
+  const [newSalesperson, setNewSalesperson] = useState('');
   const logoRef = useRef();
 
   useEffect(() => {
@@ -99,6 +101,12 @@ export default function Settings() {
     }
   }, [settings]);
 
+  useEffect(() => {
+    axios.get('/api/salespersons')
+      .then((res) => setSalespersons(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setSalespersons([]));
+  }, []);
+
   const handleLogoUpload = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploading(true);
@@ -116,6 +124,45 @@ export default function Settings() {
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const toggleCol = (key) => setColVis(p => ({ ...p, [key]: !p[key] }));
+
+  const addSalesperson = async () => {
+    try {
+      const name = newSalesperson.trim();
+      if (!name) return;
+      const res = await axios.post('/api/salespersons', { name, is_default: salespersons.length === 0 });
+      setSalespersons((prev) => [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewSalesperson('');
+      addToast('Salesperson added', 'success');
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Failed to add salesperson', 'error');
+    }
+  };
+
+  const updateSalesperson = async (id, patch) => {
+    const current = salespersons.find((s) => s.id === id);
+    if (!current) return;
+    const payload = { name: patch.name ?? current.name, is_default: patch.is_default ?? current.is_default };
+    try {
+      await axios.put(`/api/salespersons/${id}`, payload);
+      setSalespersons((prev) => prev.map((s) => {
+        if (payload.is_default) return { ...s, is_default: s.id === id };
+        if (s.id !== id) return s;
+        return { ...s, ...payload };
+      }).sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Failed to update salesperson', 'error');
+    }
+  };
+
+  const deleteSalesperson = async (id) => {
+    try {
+      await axios.delete(`/api/salespersons/${id}`);
+      setSalespersons((prev) => prev.filter((s) => s.id !== id));
+      addToast('Salesperson deleted', 'success');
+    } catch {
+      addToast('Failed to delete salesperson', 'error');
+    }
+  };
 
   return (
     <div>
@@ -308,6 +355,48 @@ export default function Settings() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Salesperson Master</span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Only one default salesperson is allowed</span>
+          </div>
+          <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {salespersons.map((s) => (
+              <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '24px 1fr auto auto', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="radio"
+                  name="default-salesperson"
+                  checked={!!s.is_default}
+                  onChange={() => updateSalesperson(s.id, { is_default: true })}
+                />
+                <input
+                  value={s.name}
+                  onChange={(e) => setSalespersons((prev) => prev.map((p) => p.id === s.id ? { ...p, name: e.target.value } : p))}
+                  onBlur={() => updateSalesperson(s.id, { name: s.name.trim() })}
+                  placeholder="Salesperson name"
+                />
+                <button className="btn btn-secondary btn-sm" onClick={() => updateSalesperson(s.id, { is_default: true })}>
+                  Default
+                </button>
+                <button className="btn btn-danger btn-sm" onClick={() => deleteSalesperson(s.id)}>
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                value={newSalesperson}
+                onChange={(e) => setNewSalesperson(e.target.value)}
+                placeholder="+ Add Salesperson"
+                onKeyDown={(e) => e.key === 'Enter' && addSalesperson()}
+              />
+              <button className="btn btn-primary btn-sm" onClick={addSalesperson}>
+                <Plus size={12} /> Add
+              </button>
             </div>
           </div>
         </div>

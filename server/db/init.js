@@ -28,6 +28,21 @@ CREATE TABLE IF NOT EXISTS products (
   track_stock INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS product_keywords (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id TEXT NOT NULL,
+  keyword TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_keyword ON product_keywords(keyword);
+CREATE INDEX IF NOT EXISTS idx_product ON product_keywords(product_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS products_fts
+USING fts5(
+  product_id UNINDEXED,
+  product_name,
+  code,
+  category,
+  tokenize='unicode61'
+);
 CREATE TABLE IF NOT EXISTS _migration_guard (id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS quotations (
   id TEXT PRIMARY KEY,
@@ -70,6 +85,11 @@ CREATE TABLE IF NOT EXISTS quotation_items (
   bill_after_warranty INTEGER DEFAULT 0,
   warranty_end_date TEXT,
   FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS salespersons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  is_default INTEGER DEFAULT 0
 );
 `;
 
@@ -150,6 +170,11 @@ async function initDatabase() {
   } catch (_) {
     /* column already exists */
   }
+  try {
+    await db.execute("ALTER TABLE quotations ADD COLUMN customer_city TEXT DEFAULT ''");
+  } catch (_) {
+    /* column already exists */
+  }
 
   for (const [k, v] of Object.entries(defaultSettings)) {
     await db.execute({
@@ -166,6 +191,14 @@ async function initDatabase() {
       args: p,
     }));
     await db.batch(stmts, 'write');
+  }
+
+  await db.execute("UPDATE salespersons SET is_default = CASE WHEN id = (SELECT id FROM salespersons WHERE is_default = 1 ORDER BY id LIMIT 1) THEN 1 ELSE 0 END");
+
+  const ftsCount = await db.execute('SELECT COUNT(*) as c FROM products_fts');
+  if (Number(ftsCount.rows[0]?.c ?? 0) === 0) {
+    await db.execute(`INSERT INTO products_fts (product_id, product_name, code, category)
+      SELECT id, name, COALESCE(code, ''), COALESCE(category, '') FROM products`);
   }
 }
 

@@ -1,15 +1,135 @@
 import React, { useEffect, useRef } from 'react';
 import { ArrowLeft, Printer, Download } from 'lucide-react';
+import html2pdf from 'html2pdf.js';
+import { ToWords } from 'to-words';
 import { API_BASE } from '../api/config';
 import TermsFormatted from './TermsFormatted';
 
-const ITEMS_PER_PAGE = 10;
+const toWords = new ToWords({
+  localeCode: 'en-IN',
+  converterOptions: {
+    currency: true
+  }
+});
+
+const PRINT_STYLES = `
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .screen-wrapper {
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-document {
+    width: 100%;
+    max-width: 794px;
+    margin: 0 auto;
+    padding: 0;
+    background: #ffffff;
+    box-shadow: none;
+    border-radius: 0;
+    min-height: auto !important;
+    height: auto !important;
+  }
+
+  .print-document-screen {
+    padding: 32px 36px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    border-radius: 4px;
+    margin: 24px auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+  }
+
+  thead { display: table-header-group; }
+  tbody { display: table-row-group; }
+  tfoot { display: table-footer-group; }
+
+  tr { page-break-inside: avoid; break-inside: avoid; }
+
+  .avoid-break,
+  .totals-block,
+  .print-footer {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .totals-block {
+    page-break-before: auto;
+  }
+
+  .print-header-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .customer-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  img { max-width: 100%; }
+
+  @media print {
+    .print-toolbar,
+    button {
+      display: none !important;
+    }
+
+    .print-document-screen {
+      padding: 0 !important;
+      margin: 0 !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+    }
+  }
+`;
+
+const SCREEN_TOOLBAR_STYLES = `
+  .print-toolbar {
+    position: fixed;
+    top: var(--header-h, 60px);
+    left: var(--sidebar-w, 230px);
+    right: 0;
+    z-index: 200;
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+  }
+
+  .print-view-body {
+    padding-top: 56px;
+  }
+`;
 
 function isPhoto(img) {
   return img && (img.startsWith('data:') || img.startsWith('http') || img.startsWith('/uploads'));
 }
 
-function ProductImg({ image, size = 58 }) {
+function ProductImg({ image, size = 42 }) {
   const src = isPhoto(image)
     ? image.startsWith('/')
       ? `${API_BASE}${image}`
@@ -21,18 +141,19 @@ function ProductImg({ image, size = 58 }) {
       width: size,
       height: size,
       flexShrink: 0,
-      borderRadius: 8,
+      borderRadius: 6,
       overflow: 'hidden',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       background: '#f3f4f6',
-      border: '1px solid #e5e7eb'
+      border: '1px solid #e5e7eb',
+      margin: '0 auto'
     }}>
       {src ? (
         <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       ) : (
-        <span style={{ fontSize: Math.round(size * 0.55) }}>💡</span>
+        <span style={{ fontSize: Math.round(size * 0.5) }}>💡</span>
       )}
     </div>
   );
@@ -45,6 +166,12 @@ function formatINR(v) {
   });
 }
 
+const numStyle = {
+  fontFamily: "'Inter', sans-serif",
+  fontVariantNumeric: 'tabular-nums',
+  fontFeatureSettings: '"tnum" 1'
+};
+
 function formatDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-IN', {
@@ -55,20 +182,23 @@ function formatDate(d) {
 }
 
 const thStyle = {
-  padding: '6px 4px',
+  padding: '5px 4px',
   textAlign: 'center',
   fontWeight: 600,
   color: '#374151',
   verticalAlign: 'middle',
-  fontFamily: "'Inter', sans-serif"
+  fontFamily: "'Inter', sans-serif",
+  fontSize: 10
 };
 
 const tdStyle = {
-  padding: '5px 4px',
+  padding: '4px 4px',
   textAlign: 'center',
   color: '#374151',
   verticalAlign: 'middle',
-  fontFamily: "'Inter', sans-serif"
+  fontFamily: "'Inter', sans-serif",
+  fontSize: 10.5,
+  lineHeight: 1.35
 };
 
 const smallHeading = {
@@ -81,7 +211,7 @@ const smallHeading = {
   fontFamily: "'Poppins', sans-serif"
 };
 
-function PageHeader({ quotation, settings, continued = false }) {
+function PageHeader({ quotation, settings }) {
   const logo = settings?.company_logo;
   const logoSrc = logo
     ? logo.startsWith('data:') || logo.startsWith('http')
@@ -90,20 +220,20 @@ function PageHeader({ quotation, settings, continued = false }) {
     : null;
 
   return (
-    <div className="avoid-break" style={{ borderBottom: '3px solid #f59e0b', paddingBottom: 12, marginBottom: 16 }}>
+    <div className="print-header-block" style={{ borderBottom: '3px solid #f59e0b', paddingBottom: 10, marginBottom: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-          {logoSrc && !continued && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          {logoSrc && (
             <img
               src={logoSrc}
               alt="Logo"
-              style={{ height: 64, maxWidth: 140, objectFit: 'contain', flexShrink: 0, borderRadius: 4 }}
+              style={{ height: 56, maxWidth: 120, objectFit: 'contain', flexShrink: 0, borderRadius: 4 }}
             />
           )}
 
           <div>
             <div style={{
-              fontSize: 22,
+              fontSize: 20,
               fontWeight: 350,
               color: '#111827',
               letterSpacing: '-0.5px',
@@ -113,25 +243,15 @@ function PageHeader({ quotation, settings, continued = false }) {
               {quotation.company_name || settings?.company_name || 'YOUR COMPANY'}
             </div>
 
-            {!continued && (
-              <>
-                {settings?.company_address && (
-                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, whiteSpace: 'pre-line', fontFamily: "'Inter', sans-serif" }}>
-                    {settings.company_address}
-                  </div>
-                )}
-
-                {settings?.company_phone && (
-                  <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
-                    📞 {settings.company_phone}
-                  </div>
-                )}
-              </>
+            {settings?.company_address && (
+              <div style={{ color: '#6b7280', fontSize: 10.5, marginTop: 2, whiteSpace: 'pre-line', fontFamily: "'Inter', sans-serif" }}>
+                {settings.company_address}
+              </div>
             )}
 
-            {continued && (
-              <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
-                Continued from previous page…
+            {settings?.company_phone && (
+              <div style={{ color: '#6b7280', fontSize: 10.5, marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
+                📞 {settings.company_phone}
               </div>
             )}
           </div>
@@ -139,43 +259,40 @@ function PageHeader({ quotation, settings, continued = false }) {
 
         <div style={{ textAlign: 'right' }}>
           <div style={{
-            fontSize: 16,
+            fontSize: 15,
             fontWeight: 900,
             color: '#6b7280',
             textTransform: 'uppercase',
             letterSpacing: 3,
-            marginBottom: 8,
+            marginBottom: 6,
             fontFamily: "'Poppins', sans-serif"
           }}>
-            {continued ? 'Quotation (Cont.)' : 'Quotation'}
+            Quotation
           </div>
 
-          <table style={{ fontSize: 11, marginLeft: 'auto', borderCollapse: 'collapse', fontFamily: "'Inter', sans-serif" }}>
+          <table style={{ fontSize: 10.5, marginLeft: 'auto', borderCollapse: 'collapse', fontFamily: "'Inter', sans-serif" }}>
             <tbody>
               <tr>
-                <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Quote No:</td>
-                <td style={{ fontWeight: 800, fontFamily: "'Courier New', monospace", color: '#111827', fontSize: 12, fontVariantNumeric: 'slashed-zero' }}>
+                <td style={{ color: '#374151', paddingRight: 8, fontWeight: 700 }}>Quote No:</td>
+                <td style={{ fontWeight: 800, color: '#111827', fontSize: 11.5, ...numStyle }}>
                   {quotation.quote_number}
                 </td>
               </tr>
-
               <tr>
-                <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Date:</td>
+                <td style={{ color: '#374151', paddingRight: 8, fontWeight: 700 }}>Date:</td>
                 <td style={{ fontWeight: 600, color: '#111827' }}>{formatDate(quotation.date)}</td>
               </tr>
-
               {quotation.validity_days && (
                 <tr>
-                  <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Valid Till:</td>
+                  <td style={{ color: '#374151', paddingRight: 8, fontWeight: 700 }}>Valid Till:</td>
                   <td style={{ fontWeight: 600, color: '#111827' }}>
                     {formatDate(new Date(new Date(quotation.date).getTime() + Number(quotation.validity_days) * 86400000))}
                   </td>
                 </tr>
               )}
-
               {quotation.salesperson && (
                 <tr>
-                  <td style={{ color: '#374151', paddingRight: 10, fontWeight: 700 }}>Sales Person:</td>
+                  <td style={{ color: '#374151', paddingRight: 8, fontWeight: 700 }}>Sales Person:</td>
                   <td style={{ fontWeight: 600, color: '#111827' }}>{quotation.salesperson}</td>
                 </tr>
               )}
@@ -187,47 +304,47 @@ function PageHeader({ quotation, settings, continued = false }) {
   );
 }
 
-function ItemsTable({ items, startIndex = 0, colVis = {} }) {
+function ItemsTable({ items, colVis = {} }) {
   const show = k => colVis[k] !== false;
+  const showImage = show('product_image');
 
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
+    <table className="items-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
       <thead>
         <tr style={{
           borderTop: '2px solid #e5e7eb',
           borderBottom: '2px solid #e5e7eb',
           background: '#f9fafb'
         }}>
-          {show('sr_no') && <th style={{ ...thStyle, width: 28 }}>Sr.</th>}
-          {show('product_image') && <th style={{ ...thStyle, width: 68 }}>Image</th>}
+          {show('sr_no') && <th style={{ ...thStyle, width: 26 }}>Sr.</th>}
+          {showImage && <th style={{ ...thStyle, width: 50 }}>Image</th>}
           <th style={{ ...thStyle, textAlign: 'left' }}>Product Name</th>
-          {show('shape') && <th style={{ ...thStyle, width: 48 }}>Shape</th>}
-          {show('color') && <th style={{ ...thStyle, width: 56 }}>Color</th>}
-          {show('body_color') && <th style={{ ...thStyle, width: 58 }}>Body</th>}
-          {show('warranty') && <th style={{ ...thStyle, width: 58 }}>Warr.</th>}
-          <th style={{ ...thStyle, width: 36 }}>Qty</th>
-          {show('unit') && <th style={{ ...thStyle, width: 38 }}>Unit</th>}
-          <th style={{ ...thStyle, textAlign: 'right', width: 82 }}>Rate</th>
-          {show('discount') && <th style={{ ...thStyle, textAlign: 'right', width: 44 }}>Disc.</th>}
-          <th style={{ ...thStyle, textAlign: 'right', width: 92 }}>Amount</th>
+          {show('shape') && <th style={{ ...thStyle, width: 44 }}>Shape</th>}
+          {show('color') && <th style={{ ...thStyle, width: 52 }}>Color</th>}
+          {show('body_color') && <th style={{ ...thStyle, width: 52 }}>Body</th>}
+          {show('warranty') && <th style={{ ...thStyle, width: 52 }}>Warr.</th>}
+          <th style={{ ...thStyle, width: 32 }}>Qty</th>
+          {show('unit') && <th style={{ ...thStyle, width: 36 }}>Unit</th>}
+          <th style={{ ...thStyle, textAlign: 'right', width: 76 }}>Rate</th>
+          {show('discount') && <th style={{ ...thStyle, textAlign: 'right', width: 40 }}>Disc.</th>}
+          <th style={{ ...thStyle, textAlign: 'right', width: 84 }}>Amount</th>
         </tr>
       </thead>
 
       <tbody>
         {items.map((item, i) => (
           <tr
-            key={i}
-            className="avoid-break"
+            key={item.id || item._id || i}
             style={{
               borderBottom: '1px solid #f3f4f6',
               background: i % 2 === 0 ? '#fff' : '#fafafa'
             }}
           >
-            {show('sr_no') && <td style={tdStyle}>{startIndex + i + 1}</td>}
+            {show('sr_no') && <td style={tdStyle}>{i + 1}</td>}
 
-            {show('product_image') && (
-              <td style={tdStyle}>
-                <ProductImg image={item.product_image} />
+            {showImage && (
+              <td style={{ ...tdStyle, padding: '3px 2px' }}>
+                <ProductImg image={item.product_image} size={showImage ? 38 : 0} />
               </td>
             )}
 
@@ -244,7 +361,7 @@ function ItemsTable({ items, startIndex = 0, colVis = {} }) {
             <td style={{ ...tdStyle, fontWeight: 600 }}>{item.quantity}</td>
             {show('unit') && <td style={tdStyle}>{item.unit || '—'}</td>}
 
-            <td style={{ ...tdStyle, textAlign: 'right', fontFamily: "'Courier New', monospace", fontVariantNumeric: 'slashed-zero', fontWeight: 700 }}>
+            <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, ...numStyle }}>
               {formatINR(item.rate)}
             </td>
 
@@ -254,14 +371,7 @@ function ItemsTable({ items, startIndex = 0, colVis = {} }) {
               </td>
             )}
 
-            <td style={{
-              ...tdStyle,
-              textAlign: 'right',
-              fontFamily: "'Courier New', monospace",
-              fontWeight: 700,
-              color: '#111827',
-              fontVariantNumeric: 'slashed-zero'
-            }}>
+            <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: '#111827', ...numStyle }}>
               {formatINR(item.amount)}
             </td>
           </tr>
@@ -271,16 +381,113 @@ function ItemsTable({ items, startIndex = 0, colVis = {} }) {
   );
 }
 
+function TotalsBlock({
+  quotation,
+  settings,
+  subtotal,
+  itemDiscountAmt,
+  discountAmt,
+  totalMoneySaved,
+  taxAmt,
+  grandTotal
+}) {
+  return (
+    <div className="avoid-break totals-block" style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 20,
+      marginTop: 12,
+      paddingTop: 12,
+      borderTop: '2px solid #f59e0b'
+    }}>
+      <div style={{ flex: 1, fontSize: 10.5, minWidth: 0 }}>
+        {quotation.notes && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={smallHeading}>Notes</div>
+            <div style={{ color: '#374151', whiteSpace: 'pre-line' }}>{quotation.notes}</div>
+          </div>
+        )}
+
+        {quotation.terms && (
+          <div>
+            <div style={smallHeading}>Terms & Conditions</div>
+            <div className="avoid-break" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+              <TermsFormatted text={quotation.terms} style={{ color: '#6b7280', fontSize: 9.5 }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        width: 230,
+        maxWidth: '46%',
+        background: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '12px 14px',
+        flexShrink: 0,
+        boxSizing: 'border-box'
+      }}>
+        <div style={{ fontSize: 10.5, color: '#6b7280' }}>
+          {[
+            { label: 'Subtotal', value: formatINR(subtotal) },
+            itemDiscountAmt > 0 && { label: 'Item Discount', value: `- ${formatINR(itemDiscountAmt)}` },
+            discountAmt > 0 && { label: 'Additional Discount', value: `- ${formatINR(discountAmt)}` },
+            totalMoneySaved > 0 && { label: 'Total Money Saved', value: formatINR(totalMoneySaved), highlight: true },
+            taxAmt > 0 && {
+              label: `${settings?.tax_label || 'GST'} (${quotation.tax_rate || 18}%)`,
+              value: formatINR(taxAmt)
+            }
+          ]
+            .filter(Boolean)
+            .map(row => (
+              <div key={row.label} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 8,
+                marginBottom: row.highlight ? 6 : 4,
+                alignItems: 'center',
+                paddingBottom: row.highlight ? 6 : 0,
+                borderBottom: row.highlight ? '1px solid #d1d5db' : 'none',
+                fontWeight: row.highlight ? 700 : 400,
+                color: row.highlight ? '#059669' : '#6b7280'
+              }}>
+                <span>{row.label}</span>
+                <span style={{ ...numStyle, textAlign: 'right' }}>{row.value}</span>
+              </div>
+            ))}
+        </div>
+
+        <div style={{ borderTop: '2px solid #d1d5db', paddingTop: 6, marginTop: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontWeight: 800, fontSize: 12.5, color: '#111827' }}>Grand Total</span>
+            <span style={{ ...numStyle, fontWeight: 900, fontSize: 14, color: '#111827' }}>
+              {formatINR(grandTotal)}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #d1d5db' }}>
+          <div style={{ fontSize: 9, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Amount In Words
+          </div>
+          <div style={{ marginTop: 3, fontSize: 10.5, lineHeight: 1.5, fontWeight: 600, color: '#111827' }}>
+            {toWords.convert(Number(grandTotal || 0))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PrintView({ quotation, settings, onClose }) {
   const printRef = useRef(null);
 
   useEffect(() => {
     const prev = document.body.style.background;
     document.body.style.background = '#fff';
-
-    return () => {
-      document.body.style.background = prev;
-    };
+    return () => { document.body.style.background = prev; };
   }, []);
 
   if (!quotation) return null;
@@ -288,33 +495,17 @@ export default function PrintView({ quotation, settings, onClose }) {
   const items = quotation.items ?? [];
   const colVis = settings?.columns_visible || {};
 
-  const pages = [];
-  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
-    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
-  }
-
-  if (pages.length === 0) pages.push([]);
-
-  const signatureRaw = settings?.signature;
-  const signatureSrc = signatureRaw
-    ? signatureRaw.startsWith('data:') || signatureRaw.startsWith('http')
-      ? signatureRaw
-      : `${API_BASE}${signatureRaw}`
-    : null;
-
   const subtotal = items.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const itemDiscountAmt = items.reduce((s, r) => {
     const rate = Number(r.rate) || 0;
     const quantity = Number(r.quantity) || 0;
     const discount = Number(r.discount) || 0;
-    const grossAmount = rate * quantity;
-    return s + (grossAmount * discount / 100);
+    return s + (rate * quantity * discount / 100);
   }, 0);
   const discountAmt = Number(quotation.discount) || 0;
   const totalMoneySaved = itemDiscountAmt + discountAmt;
-  const afterDisc = subtotal - discountAmt;
   const taxAmt = Number(quotation.tax) || 0;
-  const grandTotal = afterDisc + taxAmt;
+  const grandTotal = subtotal - discountAmt + taxAmt;
 
   const handlePrint = () => {
     const printContent = printRef.current?.innerHTML;
@@ -333,111 +524,18 @@ export default function PrintView({ quotation, settings, onClose }) {
         <head>
           <title>Quotation ${quotation.quote_number || ''}</title>
           <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-          <style>
-            @page {
-              size: A4 portrait;
-              margin: 10mm 12mm;
-            }
-
-            * {
-              box-sizing: border-box;
-            }
-
-            html,
-            body {
-              margin: 0;
-              padding: 0;
-              background: #ffffff;
-              font-family: 'Inter', 'Segoe UI', sans-serif;
-              font-feature-settings: "zero" 1;
-              font-variant-numeric: slashed-zero;
-              -webkit-font-smoothing: antialiased;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-
-            .screen-wrapper {
-              background: #ffffff !important;
-              padding: 0 !important;
-              margin: 0 !important;
-            }
-
-            .print-page {
-              width: 100% !important;
-              max-width: 100% !important;
-              min-height: auto !important;
-              margin: 0 !important;
-              padding: 12px !important;
-              background: #ffffff !important;
-              box-shadow: none !important;
-              border-radius: 0 !important;
-              overflow: visible !important;
-              page-break-after: always;
-              break-after: page;
-            }
-
-            .print-page:last-child {
-              page-break-after: auto;
-              break-after: auto;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              page-break-inside: auto;
-            }
-
-            thead {
-              display: table-header-group;
-            }
-
-            tbody {
-              display: table-row-group;
-            }
-
-            tr,
-            .avoid-break {
-              page-break-inside: avoid;
-              break-inside: avoid;
-            }
-
-            img {
-              max-width: 100%;
-            }
-
-            button,
-            .no-print {
-              display: none !important;
-            }
-
-            @media print {
-              .print-page {
-                page-break-after: always;
-                break-after: page;
-              }
-
-              .print-page:last-child {
-                page-break-after: auto;
-                break-after: auto;
-              }
-            }
-          </style>
+          <style>${PRINT_STYLES}</style>
         </head>
-
         <body>
-          ${printContent}
-
+          <div class="print-document">${printContent}</div>
           <script>
             window.onload = function () {
               setTimeout(function () {
                 window.focus();
                 window.print();
-              }, 700);
+              }, 500);
             };
-
-            window.onafterprint = function () {
-              window.close();
-            };
+            window.onafterprint = function () { window.close(); };
           </script>
         </body>
       </html>
@@ -445,193 +543,43 @@ export default function PrintView({ quotation, settings, onClose }) {
     printWindow.document.close();
   };
 
-  const TotalsBlock = () => (
-    <div className="avoid-break" style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 24,
-      marginTop: 16
-    }}>
-      <div style={{ flex: 1, fontSize: 11 }}>
-        {quotation.notes && (
-          <div style={{ marginBottom: 10 }}>
-            <div style={smallHeading}>Notes</div>
-            <div style={{ color: '#374151', whiteSpace: 'pre-line' }}>
-              {quotation.notes}
-            </div>
-          </div>
-        )}
+  const handleDownloadPdf = () => {
+    const el = printRef.current;
+    if (!el) return;
 
-        {quotation.terms && (
-          <div style={{ marginBottom: 10 }}>
-            <div style={smallHeading}>Terms & Conditions</div>
-            <TermsFormatted
-              text={quotation.terms}
-              style={{ color: '#6b7280', fontSize: 10 }}
-            />
-          </div>
-        )}
-      </div>
-
-      <div style={{
-        width: 240,
-        maxWidth: '48%',
-        background: '#f9fafb',
-        border: '1px solid #e5e7eb',
-        borderRadius: 10,
-        padding: '14px 16px',
-        flexShrink: 0,
-        boxSizing: 'border-box'
-      }}>
-        <div style={{ fontSize: 11, color: '#6b7280' }}>
-          {[
-            { label: 'Subtotal', value: formatINR(subtotal) },
-            itemDiscountAmt > 0 && { label: 'Item Discount', value: `- ${formatINR(itemDiscountAmt)}` },
-            discountAmt > 0 && { label: 'Additional Discount', value: `- ${formatINR(discountAmt)}` },
-            totalMoneySaved > 0 && { label: 'Total Money Saved', value: formatINR(totalMoneySaved), highlight: true },
-            taxAmt > 0 && {
-              label: `${settings?.tax_label || 'GST'} (${quotation.tax_rate || 18}%)`,
-              value: formatINR(taxAmt)
-            }
-          ]
-            .filter(Boolean)
-            .map(row => (
-              <div key={row.label} style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 8,
-                marginBottom: row.highlight ? 8 : 5,
-                alignItems: 'center',
-                paddingBottom: row.highlight ? 8 : 0,
-                borderBottom: row.highlight ? '1px solid #d1d5db' : 'none',
-                fontWeight: row.highlight ? 700 : 400,
-                color: row.highlight ? '#059669' : '#6b7280'
-              }}>
-                <span>{row.label}</span>
-                <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>
-                  {row.value}
-                </span>
-              </div>
-            ))}
-        </div>
-
-        <div style={{ borderTop: '2px solid #d1d5db', paddingTop: 8, marginTop: 4 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontWeight: 800, fontSize: 13, color: '#111827' }}>
-              Grand Total
-            </span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: 15, color: '#111827' }}>
-              {formatINR(grandTotal)}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+    html2pdf()
+      .set({
+        filename: `${quotation.quote_number || 'quotation'}.pdf`,
+        margin: [10, 12, 12, 12],
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          scrollY: 0
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'], avoid: ['.totals-block', '.print-header-block', '.customer-block'] }
+      })
+      .from(el)
+      .save();
+  };
 
   return (
     <>
       <style>{`
-        @media print {
-          @page {
-            size: A4 portrait;
-            margin: 10mm 12mm;
-          }
-
-          html,
-          body {
-            background: #fff !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          .no-print {
-            display: none !important;
-          }
-
-          .screen-wrapper {
-            background: #fff !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-
-          .print-page {
-            width: 100% !important;
-            max-width: 100% !important;
-            min-height: auto !important;
-            height: auto !important;
-            margin: 0 !important;
-            padding: 12px !important;
-            box-shadow: none !important;
-            border-radius: 0 !important;
-            overflow: visible !important;
-            page-break-after: always !important;
-            break-after: page !important;
-            box-sizing: border-box !important;
-          }
-
-          .print-page:last-child {
-            page-break-after: auto !important;
-            break-after: auto !important;
-          }
-
-          table {
-            width: 100% !important;
-            border-collapse: collapse !important;
-            page-break-inside: auto !important;
-          }
-
-          thead {
-            display: table-header-group !important;
-          }
-
-          tbody {
-            display: table-row-group !important;
-          }
-
-          tr,
-          .avoid-break {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-
-          img {
-            max-width: 100% !important;
-          }
-        }
-
-        body {
-          background: #e5e7eb;
-        }
+        ${PRINT_STYLES}
+        ${SCREEN_TOOLBAR_STYLES}
+        body { background: #e5e7eb; }
       `}</style>
 
-      <div className="no-print" style={{
-        position: 'sticky',
-        top: 0,
-        background: '#fff',
-        borderBottom: '1px solid #e5e7eb',
-        padding: '10px 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        zIndex: 50,
-        boxShadow: '0 1px 6px rgba(0,0,0,0.08)'
-      }}>
+      <div className="print-toolbar">
         <button
           onClick={onClose}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: '#374151',
-            fontWeight: 600,
-            fontSize: 14
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: '#374151', fontWeight: 600, fontSize: 14
           }}
         >
           <ArrowLeft size={16} /> Back to Edit
@@ -639,42 +587,28 @@ export default function PrintView({ quotation, settings, onClose }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            {items.length} item{items.length !== 1 ? 's' : ''} · {pages.length} page{pages.length !== 1 ? 's' : ''}
+            {items.length} item{items.length !== 1 ? 's' : ''}
           </span>
 
           <button
             onClick={handlePrint}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: '#f59e0b',
-              color: '#fff',
-              border: 'none',
-              padding: '8px 18px',
-              borderRadius: 8,
-              fontWeight: 700,
-              cursor: 'pointer',
-              fontSize: 13
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#f59e0b', color: '#fff', border: 'none',
+              padding: '8px 18px', borderRadius: 8, fontWeight: 700,
+              cursor: 'pointer', fontSize: 13
             }}
           >
             <Printer size={15} /> Print
           </button>
 
           <button
-            onClick={handlePrint}
+            onClick={handleDownloadPdf}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: '#111827',
-              color: '#fff',
-              border: 'none',
-              padding: '8px 18px',
-              borderRadius: 8,
-              fontWeight: 700,
-              cursor: 'pointer',
-              fontSize: 13
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#111827', color: '#fff', border: 'none',
+              padding: '8px 18px', borderRadius: 8, fontWeight: 700,
+              cursor: 'pointer', fontSize: 13
             }}
           >
             <Download size={15} /> Save PDF
@@ -684,89 +618,65 @@ export default function PrintView({ quotation, settings, onClose }) {
 
       <div
         ref={printRef}
-        className="screen-wrapper"
-        style={{
-          background: '#e5e7eb',
-          padding: '24px 16px',
-          minHeight: 'calc(100vh - 56px)'
-        }}
+        className="screen-wrapper print-view-body"
+        style={{ background: '#e5e7eb', padding: '16px', minHeight: 'calc(100vh - var(--header-h, 60px))' }}
       >
-        {pages.map((pageItems, pageIndex) => {
-          const isFirstPage = pageIndex === 0;
-          const isLastPage = pageIndex === pages.length - 1;
+        <div className="print-document print-document-screen" style={{ background: '#fff' }}>
+          <PageHeader quotation={quotation} settings={settings} />
 
-          return (
-            <div
-              key={pageIndex}
-              className="print-page"
-              style={{
-                background: '#fff',
-                width: '100%',
-                maxWidth: 794,
-                minHeight: 1123,
-                margin: '0 auto 24px',
-                padding: '32px 36px',
-                boxShadow: '0 4px 24px rgba(0,0,0,0.12)',
-                borderRadius: 4,
-                boxSizing: 'border-box',
-                overflow: 'visible'
-              }}
-            >
-              <PageHeader
-                quotation={quotation}
-                settings={settings}
-                continued={!isFirstPage}
-              />
-
-              {isFirstPage && (
-                <div className="avoid-break" style={{ marginBottom: 14 }}>
-                  <div style={smallHeading}>Quotation For:</div>
-
-                  <div style={{
-                    background: '#f9fafb',
-                    border: '1px solid #f3f4f6',
-                    borderRadius: 8,
-                    padding: '8px 12px',
-                    display: 'flex',
-                    gap: 24,
-                    flexWrap: 'wrap'
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: 14, color: '#111827' }}>
-                        {quotation.customer_name || 'Walk-in Customer'}
-                      </div>
-
-                      {quotation.customer_mobile && (
-                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2 }}>
-                          📞 {quotation.customer_mobile}
-                        </div>
-                      )}
-
-                      {quotation.customer_address && (
-                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 2, whiteSpace: 'pre-line' }}>
-                          {quotation.customer_address}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+          <div className="customer-block" style={{ marginBottom: 12 }}>
+            <div style={smallHeading}>Quotation For:</div>
+            <div style={{
+              background: '#f9fafb',
+              border: '1px solid #f3f4f6',
+              borderRadius: 8,
+              padding: '7px 12px'
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: '#111827' }}>
+                {quotation.customer_name || 'Walk-in Customer'}
+              </div>
+              {quotation.customer_mobile && (
+                <div style={{ color: '#6b7280', fontSize: 10.5, marginTop: 2 }}>
+                  📞 {quotation.customer_mobile}
                 </div>
               )}
-
-              <ItemsTable
-                items={pageItems}
-                startIndex={pageIndex * ITEMS_PER_PAGE}
-                colVis={colVis}
-              />
-
-              {isLastPage && (
-                <div className="avoid-break" style={{ marginTop: 16 }}>
-                  <div style={{ borderTop: '2px solid #f59e0b', marginBottom: 16 }} />
-                  <TotalsBlock />
+              {(quotation.customer_city || quotation.customer_address) && (
+                <div style={{ color: '#6b7280', fontSize: 10.5, marginTop: 2, whiteSpace: 'pre-line' }}>
+                  {[quotation.customer_city, quotation.customer_address].filter(Boolean).join('\n')}
                 </div>
               )}
             </div>
-          );
-        })}
+          </div>
+
+          <ItemsTable items={items} colVis={colVis} />
+
+          <TotalsBlock
+            quotation={quotation}
+            settings={settings}
+            subtotal={subtotal}
+            itemDiscountAmt={itemDiscountAmt}
+            discountAmt={discountAmt}
+            totalMoneySaved={totalMoneySaved}
+            taxAmt={taxAmt}
+            grandTotal={grandTotal}
+          />
+
+          <div
+            className="print-footer"
+            style={{
+              marginTop: 16,
+              paddingTop: 8,
+              borderTop: '1px solid #e5e7eb',
+              fontSize: 9.5,
+              color: '#9ca3af',
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}
+          >
+            <span>Generated by Ashok Vidyut Quotation Software</span>
+            <span>{quotation.quote_number}</span>
+          </div>
+        </div>
       </div>
     </>
   );

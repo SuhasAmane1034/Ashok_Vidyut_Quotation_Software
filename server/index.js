@@ -57,6 +57,20 @@ const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
+const normalizeTokens = (text = '') =>
+  String(text)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+const toFtsQuery = (text = '') => {
+  const tokens = normalizeTokens(text);
+  if (!tokens.length) return '';
+  return tokens.map((t) => `${t}*`).join(' AND ');
+};
+
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
@@ -189,14 +203,61 @@ app.get(
   '/api/products/search',
   authMiddleware,
   asyncHandler(async (req, res) => {
-    const q = req.query.q || '';
+    const q = String(req.query.q || '').trim();
     if (!q) return res.json([]);
-    const like = `%${q}%`;
-    const { rows } = await db.execute({
-      sql: 'SELECT * FROM products WHERE name LIKE ? OR code LIKE ? OR category LIKE ? ORDER BY name LIMIT 20',
-      args: [like, like, like],
-    });
-    res.json(rows);
+
+    const tokens = normalizeTokens(q);
+    const ftsQuery = toFtsQuery(q);
+    const scored = new Map();
+
+    if (ftsQuery) {
+      const { rows: ftsRows } = await db.execute({
+        sql: `SELECT p.*, bm25(products_fts, 1.0, 0.3, 0.2) as rank
+              FROM products_fts f
+              JOIN products p ON p.id = f.product_id
+              WHERE products_fts MATCH ?
+              ORDER BY rank
+              LIMIT 40`,
+        args: [ftsQuery],
+      });
+      ftsRows.forEach((row, idx) => {
+        scored.set(row.id, { ...row, _score: 1000 - idx * 10 + Number(row.rank || 0) * -10 });
+      });
+    }
+
+    if (tokens.length) {
+      const keywordWhere = tokens.map(() => 'LOWER(keyword) LIKE ?').join(' OR ');
+      const { rows: keywordRows } = await db.execute({
+        sql: `SELECT p.*, GROUP_CONCAT(pk.keyword) as kw_hits
+              FROM product_keywords pk
+              JOIN products p ON p.id = pk.product_id
+              WHERE ${keywordWhere}
+              GROUP BY p.id
+              LIMIT 60`,
+        args: tokens.map((t) => `%${t}%`),
+      });
+      keywordRows.forEach((row) => {
+        const existing = scored.get(row.id);
+        const hitCount = String(row.kw_hits || '').split(',').filter(Boolean).length;
+        const kwScore = 200 + hitCount * 30;
+        scored.set(row.id, { ...(existing || row), _score: (existing?._score || 0) + kwScore });
+      });
+    }
+
+    if (!scored.size) {
+      const like = `%${q}%`;
+      const { rows } = await db.execute({
+        sql: 'SELECT * FROM products WHERE name LIKE ? OR code LIKE ? OR category LIKE ? ORDER BY name LIMIT 20',
+        args: [like, like, like],
+      });
+      return res.json(rows);
+    }
+
+    const ranked = Array.from(scored.values())
+      .sort((a, b) => (b._score || 0) - (a._score || 0))
+      .slice(0, 20)
+      .map(({ _score, ...rest }) => rest);
+    res.json(ranked);
   })
 );
 
@@ -206,10 +267,9 @@ app.get(
   asyncHandler(async (req, res) => {
     const { search } = req.query;
     if (search) {
-      const like = `%${search}%`;
       const { rows } = await db.execute({
         sql: 'SELECT * FROM products WHERE name LIKE ? OR code LIKE ? ORDER BY name LIMIT 20',
-        args: [like, like],
+        args: [`%${search}%`, `%${search}%`],
       });
       return res.json(rows);
     }
@@ -241,6 +301,10 @@ app.post(
         p.track_stock ? 1 : 0,
       ],
     });
+    await db.execute({
+      sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
+      args: [id, p.name, p.code || '', p.category || ''],
+    });
     res.json({ id, ...p });
   })
 );
@@ -267,6 +331,11 @@ app.put(
         req.params.id,
       ],
     });
+    await db.execute({ sql: 'DELETE FROM products_fts WHERE product_id = ?', args: [req.params.id] });
+    await db.execute({
+      sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
+      args: [req.params.id, p.name, p.code || '', p.category || ''],
+    });
     res.json({ success: true });
   })
 );
@@ -276,6 +345,108 @@ app.delete(
   authMiddleware,
   asyncHandler(async (req, res) => {
     await db.execute({ sql: 'DELETE FROM products WHERE id=?', args: [req.params.id] });
+    await db.execute({ sql: 'DELETE FROM products_fts WHERE product_id=?', args: [req.params.id] });
+    await db.execute({ sql: 'DELETE FROM product_keywords WHERE product_id=?', args: [req.params.id] });
+    res.json({ success: true });
+  })
+);
+
+app.get(
+  '/api/products/:id/keywords',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute({
+      sql: 'SELECT id, keyword FROM product_keywords WHERE product_id = ? ORDER BY keyword',
+      args: [req.params.id],
+    });
+    res.json(rows);
+  })
+);
+
+app.put(
+  '/api/products/:id/keywords',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const keywords = Array.isArray(req.body?.keywords)
+      ? [...new Set(req.body.keywords.map((k) => String(k || '').trim().toLowerCase()).filter(Boolean))]
+      : [];
+    const stmts = [{ sql: 'DELETE FROM product_keywords WHERE product_id=?', args: [req.params.id] }];
+    keywords.forEach((keyword) => {
+      stmts.push({ sql: 'INSERT INTO product_keywords (product_id, keyword) VALUES (?, ?)', args: [req.params.id, keyword] });
+    });
+    await db.batch(stmts, 'write');
+    res.json({ success: true, count: keywords.length });
+  })
+);
+
+// ── SALESPERSONS ──────────────────────────────────────────
+app.get(
+  '/api/salespersons',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.execute('SELECT id, name, is_default FROM salespersons ORDER BY name');
+    res.json(rows.map((r) => ({ ...r, is_default: !!r.is_default })));
+  })
+);
+
+app.post(
+  '/api/salespersons',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const isDefault = !!req.body?.is_default;
+    if (!name) return res.status(400).json({ error: 'Salesperson name is required' });
+    const tx = await db.transaction('write');
+    try {
+      if (isDefault) await tx.execute('UPDATE salespersons SET is_default = 0');
+      const row = await tx.execute({
+        sql: 'INSERT INTO salespersons (name, is_default) VALUES (?, ?)',
+        args: [name, isDefault ? 1 : 0],
+      });
+      await tx.commit();
+      res.status(201).json({ id: Number(row.lastInsertRowid), name, is_default: isDefault });
+    } catch (e) {
+      await tx.rollback();
+      if (String(e.message || '').toLowerCase().includes('unique')) {
+        return res.status(400).json({ error: 'Salesperson already exists' });
+      }
+      throw e;
+    } finally {
+      tx.close();
+    }
+  })
+);
+
+app.put(
+  '/api/salespersons/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const isDefault = !!req.body?.is_default;
+    if (!name) return res.status(400).json({ error: 'Salesperson name is required' });
+    const tx = await db.transaction('write');
+    try {
+      if (isDefault) await tx.execute('UPDATE salespersons SET is_default = 0');
+      await tx.execute({
+        sql: 'UPDATE salespersons SET name=?, is_default=? WHERE id=?',
+        args: [name, isDefault ? 1 : 0, Number(req.params.id)],
+      });
+      await tx.commit();
+      res.json({ success: true });
+    } catch (e) {
+      await tx.rollback();
+      throw e;
+    } finally {
+      tx.close();
+    }
+  })
+);
+
+app.delete(
+  '/api/salespersons/:id',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    await db.execute({ sql: 'DELETE FROM salespersons WHERE id=?', args: [Number(req.params.id)] });
     res.json({ success: true });
   })
 );
@@ -381,7 +552,7 @@ app.post(
 
     const stmts = [
       {
-        sql: `INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_address,salesperson,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        sql: `INSERT INTO quotations (id,quote_number,company_name,company_logo,customer_name,customer_mobile,customer_city,customer_address,salesperson,date,validity_days,subtotal,discount,tax,tax_rate,total,notes,terms,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         args: [
           id,
           quote_number,
@@ -389,6 +560,7 @@ app.post(
           logo,
           q.customer_name || '',
           q.customer_mobile || '',
+          q.customer_city || '',
           q.customer_address || '',
           q.salesperson || '',
           q.date || new Date().toISOString().split('T')[0],
@@ -450,12 +622,13 @@ app.put(
 
     const stmts = [
       {
-        sql: `UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_address=?,salesperson=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`,
+        sql: `UPDATE quotations SET company_name=?,company_logo=?,customer_name=?,customer_mobile=?,customer_city=?,customer_address=?,salesperson=?,date=?,validity_days=?,subtotal=?,discount=?,tax=?,tax_rate=?,total=?,notes=?,terms=?,status=?,updated_at=datetime('now') WHERE id=?`,
         args: [
           q.company_name || '',
           logo,
           q.customer_name || '',
           q.customer_mobile || '',
+          q.customer_city || '',
           q.customer_address || '',
           q.salesperson || '',
           q.date,
@@ -607,10 +780,11 @@ app.post(
           const description = String(row.description || row.Description || '').trim();
           const trackStockRaw = row.track_stock ?? row.trackStock ?? row['Track Stock'] ?? row['track stock'] ?? '';
           const trackStock = ['1', 'true', 'yes', 'y'].includes(String(trackStockRaw).trim().toLowerCase());
+          const productId = uuidv4();
           await tx.execute({
             sql: 'INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
             args: [
-              uuidv4(),
+              productId,
               name,
               String(row.code || row.Code || '').trim(),
               description,
@@ -623,6 +797,10 @@ app.post(
               Number(row.min_stock || 5),
               trackStock ? 1 : 0,
             ],
+          });
+          await tx.execute({
+            sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
+            args: [productId, name, String(row.code || row.Code || '').trim(), String(row.category || row.Category || '').trim()],
           });
           imported++;
         } catch (e) {
