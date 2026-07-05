@@ -533,9 +533,10 @@ export default function QuotationBuilder() {
   const selectProduct = useCallback((i, p) => {
     setRows(prev => {
       const next = [...prev];
-      const qty  = Number(next[i].quantity) || 1;
+      const qty  = next[i].quantity;
       next[i] = { ...next[i], product_id: p.id, product_name: p.name, rate: p.rate, unit: p.unit || 'Pcs', product_image: p.image || '', quantity: qty };
-      next[i].amount = qty * p.rate * (1 - (Number(next[i].discount) || 0) / 100);
+      const calcQty = Number(qty) || 0;
+      next[i].amount = calcQty * p.rate * (1 - (Number(next[i].discount) || 0) / 100);
       if (i === next.length - 1) next.push(emptyRow());
       setTimeout(() => {
         document.querySelector(`[data-row="${i + 1}"][data-field="product_name"] input`)?.focus();
@@ -949,6 +950,7 @@ export default function QuotationBuilder() {
                         )}
                         <td data-row={i} data-field="quantity">
                           <input className="grid-input num-input" type="number" value={row.quantity} min="0"
+                            placeholder="1"
                             onChange={e => updateRow(i, 'quantity', e.target.value)}
                             onKeyDown={e => handleKeyNav(e, i, 'quantity')} />
                          </td>

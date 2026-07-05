@@ -528,18 +528,18 @@ app.post(
     const latestQuote = await db.execute({
       sql: "SELECT quote_number FROM quotations ORDER BY created_at DESC LIMIT 1",
     });
-    
+
     let nextNumber = 1;
-    
+
     if (latestQuote.rows[0]?.quote_number) {
       const last = latestQuote.rows[0].quote_number;
       const num = parseInt(last.replace('QT-', ''), 10);
-    
+
       if (!isNaN(num)) {
         nextNumber = num + 1;
       }
     }
-    
+
     const quote_number = `QT-${String(nextNumber).padStart(4, '0')}`;
 
     const q = req.body;
@@ -754,68 +754,335 @@ app.post(
     if (!req.file?.buffer) return res.status(400).json({ error: 'No file uploaded' });
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-    let imported = 0;
+
     let skipped = 0;
     const errors = [];
+    const excelCodes = new Set();
 
-    const tx = await db.transaction('write');
-    try {
-      for (let idx = 0; idx < rows.length; idx++) {
-        const row = rows[idx];
-        try {
-          const name = String(row.name || row.Name || row['Product Name'] || '').trim();
-          if (!name) {
-            skipped++;
-            continue;
-          }
-          const dup = await tx.execute({
-            sql: 'SELECT id FROM products WHERE LOWER(name)=LOWER(?)',
-            args: [name],
-          });
-          if (dup.rows[0]) {
-            skipped++;
-            continue;
-          }
-          const imageUrl = String(row.imageUrl || row.image || row.Image || row['Image URL'] || '').trim();
-          const description = String(row.description || row.Description || '').trim();
-          const trackStockRaw = row.track_stock ?? row.trackStock ?? row['Track Stock'] ?? row['track stock'] ?? '';
-          const trackStock = ['1', 'true', 'yes', 'y'].includes(String(trackStockRaw).trim().toLowerCase());
-          const productId = uuidv4();
-          await tx.execute({
-            sql: 'INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            args: [
-              productId,
-              name,
-              String(row.code || row.Code || '').trim(),
-              description,
-              Number(row.rate || row.Rate || row.Price || 0),
-              String(row.unit || row.Unit || 'Pcs').trim(),
-              imageUrl,
-              Number(row.mrp || row.MRP || 0) || null,
-              String(row.category || row.Category || '').trim(),
-              Number(row.stock || 0),
-              Number(row.min_stock || 5),
-              trackStock ? 1 : 0,
-            ],
-          });
-          await tx.execute({
-            sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
-            args: [productId, name, String(row.code || row.Code || '').trim(), String(row.category || row.Category || '').trim()],
-          });
-          imported++;
-        } catch (e) {
-          errors.push(`Row ${idx + 2}: ${e.message}`);
+    const getExcelVal = (row, keys) => {
+      for (const k of Object.keys(row)) {
+        const cleanKey = k.replace(/\s+/g, ' ').trim().toLowerCase();
+        if (keys.includes(cleanKey)) {
+          return row[k];
         }
       }
-      await tx.commit();
-    } catch (e) {
-      await tx.rollback();
-      throw e;
-    } finally {
-      tx.close();
+      return undefined;
+    };
+
+    const parseNumericValue = (val, fieldName) => {
+      if (val === undefined || val === null) return null;
+      const str = String(val).trim();
+      if (str === '') return null;
+      // Extract numeric characters, minus sign, and dot (removing commas, currency symbols like ₹, $, Rs., etc.)
+      const cleanStr = str.replace(/[^\d.-]/g, '');
+      if (cleanStr === '') {
+        throw new Error(`Invalid ${fieldName}: must be a number`);
+      }
+      const num = Number(cleanStr);
+      if (isNaN(num)) {
+        throw new Error(`Invalid ${fieldName}: must be a number`);
+      }
+      return num;
+    };
+
+    // 1. Fetch all existing products to map in-memory
+    const { rows: dbProducts } = await db.execute('SELECT * FROM products');
+    const productMapByCode = new Map();
+    const productMapByName = new Map();
+
+    dbProducts.forEach((p) => {
+      const productObj = { ...p, isNew: false, isUpdated: false };
+      if (p.code && p.code.trim()) {
+        productMapByCode.set(p.code.trim().toUpperCase(), productObj);
+      }
+      if (p.name && p.name.trim()) {
+        productMapByName.set(p.name.trim().toLowerCase(), productObj);
+      }
+    });
+
+    // 2. Process each row in-memory
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      const code = String(getExcelVal(row, ['code', 'product code', 'product_code']) || '').trim();
+      const name = String(getExcelVal(row, ['name', 'product name', 'product_name', 'title']) || '').trim();
+
+      // Skip invalid rows (completely empty or containing no name/code)
+      if (!code && !name) {
+        skipped++;
+        continue;
+      }
+      if (!name) {
+        skipped++;
+        continue;
+      }
+
+      const codeUpper = code.toUpperCase();
+      const nameLower = name.toLowerCase();
+
+      // Check duplicate code inside the Excel file
+      if (code) {
+        if (excelCodes.has(codeUpper)) {
+          errors.push({
+            row: idx + 2,
+            code,
+            name: name || '',
+            message: 'Duplicate product code found within spreadsheet',
+          });
+          skipped++;
+          continue;
+        }
+        excelCodes.add(codeUpper);
+      }
+
+      try {
+        // Retrieve existing product:
+        // A. Match by product code first
+        let existing = null;
+        if (code) {
+          existing = productMapByCode.get(codeUpper);
+        }
+        // B. Fall back to exact name if code matches nothing or is not in the row,
+        // provided the DB product has no code, the row has no code, or the codes are identical
+        if (!existing && name) {
+          const matchByName = productMapByName.get(nameLower);
+          if (matchByName) {
+            if (!matchByName.code || matchByName.code.trim() === '' || !code || matchByName.code.trim().toUpperCase() === codeUpper) {
+              existing = matchByName;
+            }
+          }
+        }
+
+        const isNew = !existing;
+
+        // Parse and validate numeric inputs (with currency cleaning)
+        const rateRaw = getExcelVal(row, [
+          'rate', 'price', 'rate (₹)', 'rate(₹)', 'price (₹)', 'price(₹)',
+          'rate (rs)', 'rate(rs)', 'rate rs', 'price (rs)', 'price(rs)', 'price rs',
+          'rate(rs.)', 'rate (rs.)', 'price(rs.)', 'price (rs.)'
+        ]);
+        const mrpRaw = getExcelVal(row, [
+          'mrp', 'mrp (₹)', 'mrp(₹)', 'mrp (rs)', 'mrp(rs)', 'mrp rs', 'mrp(rs.)', 'mrp (rs.)'
+        ]);
+        const stockRaw = getExcelVal(row, ['stock', 'quantity', 'qty', 'stock qty', 'stock quantity']);
+        const minStockRaw = getExcelVal(row, ['min_stock', 'minstock', 'min stock', 'minimum stock']);
+        const trackStockRaw = getExcelVal(row, ['track_stock', 'trackstock', 'track stock']);
+
+        let rate = null;
+        if (rateRaw !== undefined && rateRaw !== null) {
+          rate = parseNumericValue(rateRaw, 'rate');
+          if (rate !== null && rate < 0) throw new Error('Invalid rate: price cannot be negative');
+        }
+
+        let mrp = null;
+        if (mrpRaw !== undefined && mrpRaw !== null) {
+          mrp = parseNumericValue(mrpRaw, 'mrp');
+          if (mrp !== null && mrp < 0) throw new Error('Invalid mrp: price cannot be negative');
+        }
+
+        let stock = null;
+        if (stockRaw !== undefined && stockRaw !== null) {
+          stock = parseNumericValue(stockRaw, 'stock');
+          if (stock !== null && stock < 0) throw new Error('Invalid stock: cannot be negative');
+        }
+
+        let min_stock = null;
+        if (minStockRaw !== undefined && minStockRaw !== null) {
+          min_stock = parseNumericValue(minStockRaw, 'min_stock');
+          if (min_stock !== null && min_stock < 0) throw new Error('Invalid min_stock: cannot be negative');
+        }
+
+        let track_stock = null;
+        if (trackStockRaw !== undefined && trackStockRaw !== null && String(trackStockRaw).trim() !== '') {
+          const trackStockStr = String(trackStockRaw).trim().toLowerCase();
+          if (!['1', 'true', 'yes', 'y', '0', 'false', 'no', 'n'].includes(trackStockStr)) {
+            throw new Error('Invalid boolean value for track_stock');
+          }
+          track_stock = ['1', 'true', 'yes', 'y'].includes(trackStockStr) ? 1 : 0;
+        }
+
+        // Parse other fields
+        const categoryRaw = getExcelVal(row, ['category', 'cat']);
+        const unitRaw = getExcelVal(row, ['unit']);
+        const imageRaw = getExcelVal(row, ['image', 'imageurl', 'image url', 'image_url', 'image url']);
+        const descriptionRaw = getExcelVal(row, ['description', 'desc']);
+
+        const category = categoryRaw !== undefined && categoryRaw !== null ? String(categoryRaw).trim() : '';
+        const unit = unitRaw !== undefined && unitRaw !== null ? String(unitRaw).trim() : '';
+        const image = imageRaw !== undefined && imageRaw !== null ? String(imageRaw).trim() : '';
+        const description = descriptionRaw !== undefined && descriptionRaw !== null ? String(descriptionRaw).trim() : '';
+
+        if (isNew) {
+          const newProduct = {
+            id: uuidv4(),
+            code,
+            name,
+            rate: rate ?? 0,
+            mrp: mrp ?? null,
+            category: category ?? '',
+            unit: unit ?? 'Pcs',
+            image: image ?? '',
+            description: description ?? '',
+            track_stock: track_stock ?? 0,
+            min_stock: min_stock ?? 5,
+            stock: stock ?? 0,
+            isNew: true,
+            isUpdated: false,
+          };
+          if (code) productMapByCode.set(codeUpper, newProduct);
+          productMapByName.set(nameLower, newProduct);
+        } else {
+          if (name) {
+            existing.name = name;
+            existing.isUpdated = true;
+          }
+          if (code) {
+            existing.code = code;
+            existing.isUpdated = true;
+            // Also map it in the code map so subsequent rows with the same code match it
+            productMapByCode.set(codeUpper, existing);
+          }
+          if (rate !== null) {
+            existing.rate = rate;
+            existing.isUpdated = true;
+          }
+          if (mrp !== null) {
+            existing.mrp = mrp;
+            existing.isUpdated = true;
+          }
+          if (category) {
+            existing.category = category;
+            existing.isUpdated = true;
+          }
+          if (unit) {
+            existing.unit = unit;
+            existing.isUpdated = true;
+          }
+          if (image) {
+            existing.image = image;
+            existing.isUpdated = true;
+          }
+          if (description) {
+            existing.description = description;
+            existing.isUpdated = true;
+          }
+          if (track_stock !== null) {
+            existing.track_stock = track_stock;
+            existing.isUpdated = true;
+          }
+          if (min_stock !== null) {
+            existing.min_stock = min_stock;
+            existing.isUpdated = true;
+          }
+          if (stock !== null) {
+            existing.stock = stock;
+            existing.isUpdated = true;
+          }
+        }
+      } catch (e) {
+        errors.push({
+          row: idx + 2,
+          code: code || '',
+          name: name || '',
+          message: e.message,
+        });
+        skipped++;
+      }
     }
 
-    res.json({ success: true, imported, skipped, errors: errors.slice(0, 10) });
+    // 3. Build SQLite Batch queries
+    const stmts = [];
+    let created = 0;
+    let updated = 0;
+
+    const uniqueProductsToSave = new Set([...productMapByCode.values(), ...productMapByName.values()]);
+
+    for (const p of uniqueProductsToSave) {
+      if (p.isNew) {
+        created++;
+        stmts.push({
+          sql: 'INSERT INTO products (id,name,code,description,rate,unit,image,mrp,category,stock,min_stock,track_stock) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          args: [
+            p.id,
+            p.name,
+            p.code || '',
+            p.description || '',
+            p.rate,
+            p.unit,
+            p.image,
+            p.mrp,
+            p.category,
+            p.stock,
+            p.min_stock,
+            p.track_stock,
+          ],
+        });
+        stmts.push({
+          sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
+          args: [p.id, p.name, p.code || '', p.category || ''],
+        });
+      } else if (p.isUpdated) {
+        updated++;
+        stmts.push({
+          sql: 'UPDATE products SET name=?,code=?,description=?,rate=?,unit=?,image=?,mrp=?,category=?,stock=?,min_stock=?,track_stock=? WHERE id=?',
+          args: [
+            p.name,
+            p.code || '',
+            p.description || '',
+            p.rate,
+            p.unit,
+            p.image,
+            p.mrp,
+            p.category,
+            p.stock,
+            p.min_stock,
+            p.track_stock,
+            p.id,
+          ],
+        });
+        stmts.push({
+          sql: 'DELETE FROM products_fts WHERE product_id = ?',
+          args: [p.id],
+        });
+        stmts.push({
+          sql: 'INSERT INTO products_fts (product_id, product_name, code, category) VALUES (?, ?, ?, ?)',
+          args: [p.id, p.name, p.code || '', p.category || ''],
+        });
+      }
+    }
+
+    // Execute SQLite queries in chunks
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < stmts.length; i += CHUNK_SIZE) {
+      const chunk = stmts.slice(i, i + CHUNK_SIZE);
+      await db.batch(chunk, 'write');
+    }
+
+    // 4. Log Audit Session
+    try {
+      await db.execute({
+        sql: 'INSERT INTO import_logs (id, imported_by, import_time, file_name, products_added, products_updated, products_skipped, total_rows) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [
+          uuidv4(),
+          req.user.name || req.user.email || 'Admin',
+          new Date().toISOString(),
+          req.file?.originalname || 'unknown.xlsx',
+          created,
+          updated,
+          skipped,
+          rows.length,
+        ],
+      });
+    } catch (logErr) {
+      console.error('Failed to save import log:', logErr);
+    }
+
+    res.json({
+      success: true,
+      created,
+      updated,
+      skipped,
+      errors,
+    });
   })
 );
 

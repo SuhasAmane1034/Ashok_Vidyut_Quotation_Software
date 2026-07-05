@@ -30,6 +30,7 @@ export default function ProductLibrary() {
   const [catFilter, setCatFilter] = useState('');
   const [modal, setModal] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [editingRate, setEditingRate] = useState({ id: null, val: '' });
 
   const importRef = useRef();
   const imgRef = useRef();
@@ -89,6 +90,39 @@ export default function ProductLibrary() {
     }
   };
 
+  // Helper to escape values for CSV
+  const escapeCsv = (val) => {
+    const str = String(val ?? '');
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const downloadErrorReportCSV = (errors) => {
+    if (!errors || errors.length === 0) return;
+    const headers = ['Row Number', 'Product Code', 'Product Name', 'Error'];
+    const csvContent = [
+      headers.join(','),
+      ...errors.map(err => [
+        err.row,
+        escapeCsv(err.code),
+        escapeCsv(err.name),
+        escapeCsv(err.message)
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `import_errors_${Date.now()}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // ---------------- IMPORT (FIXED) ----------------
   const handleImport = async (e) => {
     const file = e.target.files[0];
@@ -105,7 +139,43 @@ export default function ProductLibrary() {
       });
 
       qc.invalidateQueries(['products']);
-      addToast(`Imported ${res.data.imported} products!`, 'success');
+
+      const { created, updated, skipped, errors } = res.data;
+
+      const toastMessage = (
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '13px' }}>Import Completed Successfully</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '12px', opacity: 0.9 }}>
+            <div>✓ {updated} Products Updated</div>
+            <div>✓ {created} Products Added</div>
+            <div>⚠ {skipped} Rows Skipped</div>
+          </div>
+          {errors && errors.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <button
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent)',
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  padding: 0
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  downloadErrorReportCSV(errors);
+                }}
+              >
+                View Error Report
+              </button>
+            </div>
+          )}
+        </div>
+      );
+
+      addToast(toastMessage, 'success');
     } catch (err) {
       console.error(err);
       addToast('Import failed', 'error');
@@ -234,7 +304,50 @@ export default function ProductLibrary() {
                       <td style={{ fontWeight: 600 }}>{p.name}</td>
                       <td>{p.code ? <span className="badge badge-accent">{p.code}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                       <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{p.category || '—'}</td>
-                      <td style={{ fontWeight: 700, textAlign: 'right' }}>₹{Number(p.rate).toLocaleString('en-IN')}</td>
+                      <td style={{ textAlign: 'right', width: 130 }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2 }}>
+                          <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>₹</span>
+                          <input
+                            type="number"
+                            className="no-spin"
+                            min="0"
+                            step="any"
+                            value={editingRate.id === p.id ? editingRate.val : (p.rate ?? 0)}
+                            onChange={(e) => setEditingRate({ id: p.id, val: e.target.value })}
+                            onFocus={() => setEditingRate({ id: p.id, val: String(p.rate ?? 0) })}
+                            onBlur={() => {
+                              const newRate = Number(editingRate.val);
+                              if (editingRate.id === p.id && newRate !== p.rate && !isNaN(newRate) && newRate >= 0) {
+                                saveMutation.mutate({
+                                  ...p,
+                                  rate: newRate
+                                });
+                              }
+                              setEditingRate({ id: null, val: '' });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.target.blur();
+                              }
+                            }}
+                            style={{
+                              width: 90,
+                              textAlign: 'right',
+                              background: editingRate.id === p.id ? 'var(--bg-input)' : 'transparent',
+                              border: editingRate.id === p.id ? '1px solid var(--accent)' : '1px solid transparent',
+                              borderRadius: 4,
+                              padding: '2px 6px',
+                              fontWeight: 700,
+                              fontSize: 13,
+                              color: 'var(--text-primary)',
+                              outline: 'none',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
+                            title="Click to edit rate"
+                          />
+                        </div>
+                      </td>
                       <td style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{p.mrp ? `₹${Number(p.mrp).toLocaleString('en-IN')}` : '—'}</td>
                       <td><span className="tag">{p.unit}</span></td>
                       <td>
@@ -307,11 +420,11 @@ export default function ProductLibrary() {
               <div className="grid-3">
                 <div className="form-group">
                   <label>Rate (₹) *</label>
-                  <input type="number" value={modal.data.rate} onChange={e => setModal(m => ({ ...m, data: { ...m.data, rate: e.target.value } }))} min="0" />
+                  <input className="no-spin" type="number" value={modal.data.rate} onChange={e => setModal(m => ({ ...m, data: { ...m.data, rate: e.target.value } }))} min="0" />
                 </div>
                 <div className="form-group">
                   <label>MRP (₹)</label>
-                  <input type="number" value={modal.data.mrp} onChange={e => setModal(m => ({ ...m, data: { ...m.data, mrp: e.target.value } }))} min="0" />
+                  <input className="no-spin" type="number" value={modal.data.mrp} onChange={e => setModal(m => ({ ...m, data: { ...m.data, mrp: e.target.value } }))} min="0" />
                 </div>
                 <div className="form-group">
                   <label>Unit</label>

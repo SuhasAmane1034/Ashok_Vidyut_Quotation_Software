@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Plus, Search, Edit2, Trash2, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, Copy } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export default function Quotations() {
@@ -21,6 +21,20 @@ export default function Quotations() {
     mutationFn: (id) => axios.delete(`/api/quotations/${id}`),
     onSuccess: () => { qc.invalidateQueries(['quotations']); qc.invalidateQueries(['analytics']); addToast('Quotation deleted'); },
     onError: () => addToast('Failed to delete', 'error')
+  });
+
+  const duplicateMutation = useMutation({
+    mutationFn: async (id) => {
+      const { data } = await axios.get(`/api/quotations/${id}`);
+      const { id: oldId, quote_number, created_at, updated_at, ...rest } = data;
+      return axios.post('/api/quotations', { ...rest, status: 'draft', date: new Date().toISOString().split('T')[0] });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(['quotations']);
+      qc.invalidateQueries(['analytics']);
+      addToast('Quotation duplicated as Draft');
+    },
+    onError: () => addToast('Failed to duplicate quotation', 'error')
   });
 
   const updateStatus = useMutation({
@@ -144,6 +158,14 @@ export default function Quotations() {
                             <Link to={`/quotations/${q.id}/edit`} className="btn btn-ghost btn-sm btn-icon" title="Edit">
                               <Edit2 size={13} />
                             </Link>
+                            <button className="btn btn-ghost btn-sm btn-icon" title="Duplicate"
+                              onClick={() => {
+                                if (window.confirm(`Duplicate ${q.quote_number}?`)) {
+                                  duplicateMutation.mutate(q.id);
+                                }
+                              }}>
+                              <Copy size={13} />
+                            </button>
                             <button className="btn btn-danger btn-sm btn-icon" title="Delete"
                               onClick={() => window.confirm(`Delete ${q.quote_number}?`) && deleteMutation.mutate(q.id)}>
                               <Trash2 size={13} />

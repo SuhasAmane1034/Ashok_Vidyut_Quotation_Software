@@ -547,22 +547,36 @@ export default function PrintView({ quotation, settings, onClose }) {
     const el = printRef.current;
     if (!el) return;
 
+    el.classList.add('generating-pdf');
+
+    const customer = (quotation.customer_name || 'Walk-in-Customer').trim().replace(/[\/\\?%*:|"<>]/g, '-');
+    const quoteNo = (quotation.quote_number || 'PREVIEW').trim().replace(/[\/\\?%*:|"<>]/g, '-');
+    const filename = `${customer}-Quotation-${quoteNo}.pdf`;
+
     html2pdf()
       .set({
-        filename: `${quotation.quote_number || 'quotation'}.pdf`,
+        filename: filename,
         margin: [10, 12, 12, 12],
-        image: { type: 'jpeg', quality: 0.98 },
+        image: { type: 'jpeg', quality: 1.0 },
         html2canvas: {
-          scale: 2,
+          scale: 3,
           useCORS: true,
           logging: false,
-          scrollY: 0
+          scrollY: 0,
+          windowWidth: 794
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         pagebreak: { mode: ['css', 'legacy'], avoid: ['.totals-block', '.print-header-block', '.customer-block'] }
       })
       .from(el)
-      .save();
+      .save()
+      .then(() => {
+        el.classList.remove('generating-pdf');
+      })
+      .catch((err) => {
+        console.error(err);
+        el.classList.remove('generating-pdf');
+      });
   };
 
   return (
@@ -571,6 +585,20 @@ export default function PrintView({ quotation, settings, onClose }) {
         ${PRINT_STYLES}
         ${SCREEN_TOOLBAR_STYLES}
         body { background: #e5e7eb; }
+
+        /* Styles for clean A4 PDF generation */
+        .generating-pdf {
+          background: #ffffff !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          min-height: auto !important;
+        }
+        .generating-pdf .print-document-screen {
+          box-shadow: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          border-radius: 0 !important;
+        }
       `}</style>
 
       <div className="print-toolbar">

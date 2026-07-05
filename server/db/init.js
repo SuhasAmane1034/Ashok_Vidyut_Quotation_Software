@@ -43,6 +43,18 @@ USING fts5(
   category,
   tokenize='unicode61'
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_code ON products(code) WHERE code IS NOT NULL AND code <> '';
+CREATE TABLE IF NOT EXISTS import_logs (
+  id TEXT PRIMARY KEY,
+  imported_by TEXT NOT NULL,
+  import_time TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  products_added INTEGER NOT NULL,
+  products_updated INTEGER NOT NULL,
+  products_skipped INTEGER NOT NULL,
+  total_rows INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS _migration_guard (id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS quotations (
   id TEXT PRIMARY KEY,

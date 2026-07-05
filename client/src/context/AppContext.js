@@ -123,7 +123,7 @@ function ToastContainer({ toasts, onRemove }) {
       {toasts.map(t => (
         <div key={t.id} className={`toast toast-${t.type}`} onClick={() => onRemove(t.id)}>
           <span className="toast-icon">{icons[t.type] || '✓'}</span>
-          <span>{t.message}</span>
+          <div style={{ whiteSpace: 'pre-line', flex: 1 }}>{t.message}</div>
         </div>
       ))}
     </div>
