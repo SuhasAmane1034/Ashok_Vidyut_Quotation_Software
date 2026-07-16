@@ -351,6 +351,18 @@ app.delete(
   })
 );
 
+app.delete(
+  '/api/products/category/:category',
+  authMiddleware,
+  asyncHandler(async (req, res) => {
+    const category = decodeURIComponent(req.params.category);
+    await db.execute({ sql: 'DELETE FROM products_fts WHERE product_id IN (SELECT id FROM products WHERE category = ?)', args: [category] });
+    await db.execute({ sql: 'DELETE FROM product_keywords WHERE product_id IN (SELECT id FROM products WHERE category = ?)', args: [category] });
+    await db.execute({ sql: 'DELETE FROM products WHERE category = ?', args: [category] });
+    res.json({ success: true });
+  })
+);
+
 app.get(
   '/api/products/:id/keywords',
   authMiddleware,

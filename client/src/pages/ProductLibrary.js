@@ -68,6 +68,17 @@ export default function ProductLibrary() {
     onError: () => addToast('Delete failed', 'error')
   });
 
+  const deleteCategoryMutation = useMutation({
+    mutationFn: (category) => axios.delete(`/api/products/category/${encodeURIComponent(category)}`),
+
+    onSuccess: () => {
+      qc.invalidateQueries(['products']);
+      setCatFilter('');
+      addToast('Category products deleted');
+    },
+    onError: () => addToast('Delete category failed', 'error')
+  });
+
   // ---------------- EXPORT (FIXED) ----------------
   const handleExport = async () => {
     try {
@@ -252,6 +263,15 @@ export default function ProductLibrary() {
             <button key={c} className={`btn btn-sm ${catFilter === c ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter(c === catFilter ? '' : c)}>{c}</button>
           ))}
           {(search || catFilter) && <button className="btn btn-ghost btn-sm" onClick={() => { setSearch(''); setCatFilter(''); }}><X size={12} /> Clear</button>}
+          {catFilter && (
+            <button 
+              className="btn btn-danger btn-sm" 
+              style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }} 
+              onClick={() => window.confirm(`Are you sure you want to delete ALL products in category "${catFilter}"? This cannot be undone.`) && deleteCategoryMutation.mutate(catFilter)}
+            >
+              <Trash2 size={13} style={{ marginRight: 4 }} /> Delete Category
+            </button>
+          )}
         </div>
 
         {/* Import hint */}
