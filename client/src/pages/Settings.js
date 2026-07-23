@@ -54,6 +54,7 @@ const ALL_COLUMNS = [
   { key: 'warranty', label: 'Warranty', locked: false },
   { key: 'quantity', label: 'Quantity', locked: true },
   { key: 'unit', label: 'Unit', locked: false },
+  { key: 'mrp', label: 'MRP', locked: false },
   { key: 'rate', label: 'Rate', locked: true },
   { key: 'discount', label: 'Discount %', locked: false },
   { key: 'amount', label: 'Amount', locked: true },

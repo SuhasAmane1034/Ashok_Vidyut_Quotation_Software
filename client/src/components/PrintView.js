@@ -325,6 +325,7 @@ function ItemsTable({ items, colVis = {} }) {
           {show('warranty') && <th style={{ ...thStyle, width: 52 }}>Warr.</th>}
           <th style={{ ...thStyle, width: 32 }}>Qty</th>
           {show('unit') && <th style={{ ...thStyle, width: 36 }}>Unit</th>}
+          {show('mrp') && <th style={{ ...thStyle, textAlign: 'right', width: 60 }}>MRP</th>}
           <th style={{ ...thStyle, textAlign: 'right', width: 76 }}>Rate</th>
           {show('discount') && <th style={{ ...thStyle, textAlign: 'right', width: 40 }}>Disc.</th>}
           <th style={{ ...thStyle, textAlign: 'right', width: 84 }}>Amount</th>
@@ -360,6 +361,12 @@ function ItemsTable({ items, colVis = {} }) {
             {show('warranty') && <td style={tdStyle}>{item.warranty || '—'}</td>}
             <td style={{ ...tdStyle, fontWeight: 600 }}>{item.quantity}</td>
             {show('unit') && <td style={tdStyle}>{item.unit || '—'}</td>}
+
+            {show('mrp') && (
+              <td style={{ ...tdStyle, textAlign: 'right', ...numStyle }}>
+                {item.mrp ? formatINR(item.mrp) : '—'}
+              </td>
+            )}
 
             <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, ...numStyle }}>
               {formatINR(item.rate)}

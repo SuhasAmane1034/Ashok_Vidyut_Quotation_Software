@@ -379,6 +379,7 @@ tbody td { padding:11px 14px; vertical-align:middle; }
 .qt-table .col-unit  { width: 52px; }
 .qt-table .col-rate  { width: 80px; }
 .qt-table .col-disc  { width: 56px; }
+.qt-table .col-mrp   { width: 80px; }
 .qt-table .col-amt   { width: 120px; }
 .qt-table .col-del   { width: 30px; }
 

@@ -18,7 +18,7 @@ const emptyRow = () => ({
   _id: Math.random().toString(36).slice(2),
   product_id: '', product_name: '', product_image: '',
   shape: '', color: '', body_color: '', warranty: '',
-  quantity: '', unit: 'Pcs', rate: '', discount: 0, amount: 0,
+  quantity: '', unit: 'Pcs', mrp: '', rate: '', discount: 0, amount: 0,
   _inlineDraft: {
     name: '',
     price: '',
@@ -534,7 +534,7 @@ export default function QuotationBuilder() {
     setRows(prev => {
       const next = [...prev];
       const qty  = next[i].quantity;
-      next[i] = { ...next[i], product_id: p.id, product_name: p.name, rate: p.rate, unit: p.unit || 'Pcs', product_image: p.image || '', quantity: qty };
+      next[i] = { ...next[i], product_id: p.id, product_name: p.name, mrp: p.mrp || '', rate: p.rate, unit: p.unit || 'Pcs', product_image: p.image || '', quantity: qty };
       const calcQty = Number(qty) || 0;
       next[i].amount = calcQty * p.rate * (1 - (Number(next[i].discount) || 0) / 100);
       if (i === next.length - 1) next.push(emptyRow());
@@ -612,6 +612,7 @@ export default function QuotationBuilder() {
       'warranty',
       'quantity',
       'unit',
+      'mrp',
       'rate',
       'discount'
     ];
@@ -858,6 +859,7 @@ export default function QuotationBuilder() {
                 {show('warranty')      && <col className="col-warr" />}
                 <col className="col-qty" />
                 {show('unit')          && <col className="col-unit" />}
+                {show('mrp')           && <col className="col-mrp" />}
                 <col className="col-rate" />
                 {show('discount') && showDiscount && <col className="col-disc" />}
                 <col className="col-amt" />
@@ -874,6 +876,7 @@ export default function QuotationBuilder() {
                   {show('warranty')      && <th>WARRANTY</th>}
                   <th className="num">QTY</th>
                   {show('unit')          && <th>UNIT</th>}
+                  {show('mrp')           && <th className="num">MRP</th>}
                   <th className="num">RATE</th>
                   {show('discount') && showDiscount && <th className="num">DISC%</th>}
                   <th className="num">AMOUNT</th>
@@ -885,7 +888,7 @@ export default function QuotationBuilder() {
                   const showForm = inlineRowIdx === i;
                   const totalCols = (show('sr_no') ? 1 : 0) + (show('product_image') ? 1 : 0) + 1 +
                     (show('shape') ? 1 : 0) + (show('color') ? 1 : 0) + (show('body_color') ? 1 : 0) +
-                    (show('warranty') ? 1 : 0) + 1 + (show('unit') ? 1 : 0) + 1 +
+                    (show('warranty') ? 1 : 0) + 1 + (show('unit') ? 1 : 0) + (show('mrp') ? 1 : 0) + 1 +
                     (show('discount') && showDiscount ? 1 : 0) + 1 + 1;
 
                   return (
@@ -979,6 +982,13 @@ export default function QuotationBuilder() {
                             </select>
                            </td>
                         )}
+                        {show('mrp') && (
+                          <td data-row={i} data-field="mrp">
+                            <input className="grid-input num-input" type="number" value={row.mrp} min="0"
+                              onChange={e => updateRow(i, 'mrp', e.target.value)}
+                              onKeyDown={e => handleKeyNav(e, i, 'mrp')} />
+                           </td>
+                        )}
                         <td data-row={i} data-field="rate">
                           <input className="grid-input num-input" type="number" value={row.rate} min="0"
                             onChange={e => updateRow(i, 'rate', e.target.value)}
@@ -1046,6 +1056,7 @@ export default function QuotationBuilder() {
                       (show('warranty') ? 1 : 0) +
                       1 +
                       (show('unit') ? 1 : 0) +
+                      (show('mrp') ? 1 : 0) +
                       1
                     } />
                     {show('discount') && showDiscount && <td />}
